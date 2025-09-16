@@ -1,0 +1,84 @@
+# VS Code settings and workspace files
+.vscode/
+*.code-workspace
+
+# History files
+.history/
+
+# Compiled eBPF object files and libraries
+*.o
+*.bpf.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.lib
+*.dll
+
+# eBPF executables
+loader
+
+# Build directories
+build/
+out/
+dist/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Log files
+*.log
+logs/
+
+# Node modules (if using JavaScript/TypeScript)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# C/C++ compiled files
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
