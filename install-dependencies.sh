@@ -114,6 +114,9 @@ find_bpftool() {
 # Generate vmlinux.h
 generate_vmlinux() {
     local bpftool_path=$(find_bpftool)
+    local script_dir="$(dirname "$0")"
+    local ebpf_dir="$script_dir/eBPF"
+    
     if [ -n "$bpftool_path" ]; then
         log_info "Found bpftool at: $bpftool_path"
         
@@ -123,16 +126,20 @@ generate_vmlinux() {
             return 1
         fi
         
-        cd "$(dirname "$0")/eBPF"
+        # Check if eBPF directory exists
+        if [ ! -d "$ebpf_dir" ]; then
+            log_error "eBPF directory not found at: $ebpf_dir"
+            return 1
+        fi
         
         # Remove old vmlinux.h if exists
-        rm -f vmlinux.h
+        rm -f "$ebpf_dir/vmlinux.h"
         
         # Try to generate vmlinux.h with better error handling
         log_info "Generating vmlinux.h from kernel BTF..."
-        if sudo "$bpftool_path" btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h 2>/tmp/bpftool_error.log; then
-            if [ -s vmlinux.h ]; then
-                log_success "vmlinux.h generated successfully ($(du -h vmlinux.h | cut -f1))"
+        if sudo "$bpftool_path" btf dump file /sys/kernel/btf/vmlinux format c > "$ebpf_dir/vmlinux.h" 2>/tmp/bpftool_error.log; then
+            if [ -s "$ebpf_dir/vmlinux.h" ]; then
+                log_success "vmlinux.h generated successfully ($(du -h "$ebpf_dir/vmlinux.h" | cut -f1))"
                 return 0
             else
                 log_error "vmlinux.h was created but is empty"
