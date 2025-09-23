@@ -91,13 +91,23 @@ log_info "Setting up vmlinux.h generation..."
 
 # Function to find and use bpftool
 find_bpftool() {
-    # Try different locations where bpftool might be installed
-    for tool_path in /usr/sbin/bpftool /usr/bin/bpftool $(find /usr/lib/linux-tools* -name bpftool 2>/dev/null | head -1); do
+    # Skip the wrapper in /usr/sbin/bpftool and find the real bpftool
+    # Look for actual bpftool binaries in linux-tools directories
+    local real_bpftool=$(find /usr/lib/linux-tools-* -name bpftool -type f -executable 2>/dev/null | head -1)
+    
+    if [ -n "$real_bpftool" ] && [ -x "$real_bpftool" ]; then
+        echo "$real_bpftool"
+        return 0
+    fi
+    
+    # Fallback: try other standard locations (excluding the wrapper)
+    for tool_path in /usr/bin/bpftool; do
         if [ -x "$tool_path" ]; then
             echo "$tool_path"
             return 0
         fi
     done
+    
     return 1
 }
 
@@ -106,17 +116,33 @@ generate_vmlinux() {
     local bpftool_path=$(find_bpftool)
     if [ -n "$bpftool_path" ]; then
         log_info "Found bpftool at: $bpftool_path"
+        
+        # Test if bpftool actually works (not just a wrapper)
+        if ! sudo "$bpftool_path" version >/dev/null 2>&1; then
+            log_warning "bpftool at $bpftool_path appears to be a non-functional wrapper"
+            return 1
+        fi
+        
         cd "$(dirname "$0")/eBPF"
         
         # Remove old vmlinux.h if exists
         rm -f vmlinux.h
         
-        # Try to generate vmlinux.h
-        if sudo "$bpftool_path" btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h 2>/dev/null; then
-            log_success "vmlinux.h generated successfully ($(du -h vmlinux.h | cut -f1))"
-            return 0
+        # Try to generate vmlinux.h with better error handling
+        log_info "Generating vmlinux.h from kernel BTF..."
+        if sudo "$bpftool_path" btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h 2>/tmp/bpftool_error.log; then
+            if [ -s vmlinux.h ]; then
+                log_success "vmlinux.h generated successfully ($(du -h vmlinux.h | cut -f1))"
+                return 0
+            else
+                log_error "vmlinux.h was created but is empty"
+                cat /tmp/bpftool_error.log 2>/dev/null || true
+                return 1
+            fi
         else
             log_error "Failed to generate vmlinux.h using $bpftool_path"
+            log_info "Error details:"
+            cat /tmp/bpftool_error.log 2>/dev/null || true
             return 1
         fi
     else
