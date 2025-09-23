@@ -83,3 +83,5 @@ Thumbs.db
 *.bak
 *.backup
 11
+
+vmlinux.h

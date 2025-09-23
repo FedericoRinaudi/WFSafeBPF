@@ -61,10 +61,16 @@ log_info "Installing BPF tools..."
 apt-get install -y bpfcc-tools 2>/dev/null || log_warning "bpfcc-tools not available"
 
 # Try to install linux-tools, fallback if specific version not found
-log_info "Installing linux-tools..."
+log_info "Installing linux-tools and bpftool..."
 if ! apt-get install -y linux-tools-$(uname -r) 2>/dev/null; then
     log_warning "Specific linux-tools version not found, trying generic..."
     apt-get install -y linux-tools-generic || log_warning "linux-tools installation failed"
+fi
+
+# Additional attempt to ensure bpftool is available
+if ! command -v bpftool >/dev/null; then
+    log_info "Installing additional BPF tools..."
+    apt-get install -y linux-tools-common
 fi
 
 # Netcat for testing
@@ -80,15 +86,61 @@ else
     exit 1
 fi
 
+# Verify and generate vmlinux.h
+log_info "Setting up vmlinux.h generation..."
+
+# Function to find and use bpftool
+find_bpftool() {
+    # Try different locations where bpftool might be installed
+    for tool_path in /usr/sbin/bpftool /usr/bin/bpftool $(find /usr/lib/linux-tools* -name bpftool 2>/dev/null | head -1); do
+        if [ -x "$tool_path" ]; then
+            echo "$tool_path"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Generate vmlinux.h
+generate_vmlinux() {
+    local bpftool_path=$(find_bpftool)
+    if [ -n "$bpftool_path" ]; then
+        log_info "Found bpftool at: $bpftool_path"
+        cd "$(dirname "$0")/eBPF"
+        
+        # Remove old vmlinux.h if exists
+        rm -f vmlinux.h
+        
+        # Try to generate vmlinux.h
+        if sudo "$bpftool_path" btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h 2>/dev/null; then
+            log_success "vmlinux.h generated successfully ($(du -h vmlinux.h | cut -f1))"
+            return 0
+        else
+            log_error "Failed to generate vmlinux.h using $bpftool_path"
+            return 1
+        fi
+    else
+        log_error "bpftool not found in any standard location"
+        return 1
+    fi
+}
+
+if ! generate_vmlinux; then
+    log_error "Could not generate vmlinux.h"
+    exit 1
+fi
+
 # Test build
 log_info "Testing build..."
 cd "$(dirname "$0")/eBPF"
+
 make clean 2>/dev/null || true
 
 if make all; then
     log_success "Build test successful!"
     make clean
     log_info "Ready to use! Run 'cd eBPF && make all' to build"
+    log_info "vmlinux.h is now available for eBPF development"
 else
     log_error "Build test failed"
     exit 1

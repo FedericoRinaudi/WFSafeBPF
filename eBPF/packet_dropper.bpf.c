@@ -1,28 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
-#include <linux/udp.h>
-#include <linux/pkt_cls.h>
+#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include <stddef.h>
 #include "blake2s.h"
 
-/* Protocol definitions */
-#ifndef IPPROTO_TCP
-#define IPPROTO_TCP 6
-#endif
-
-/* Traffic Control action codes */
-#define TC_ACT_OK             0
-#define TC_ACT_SHOT           2
-
-/* Ethernet protocol types */
-#ifndef ETH_P_IP
+/* Network protocol constants */
 #define ETH_P_IP    0x0800
-#endif
+#define IPPROTO_TCP 6
+
+/* Traffic Control action codes */  
+#define TC_ACT_OK   0
+#define TC_ACT_SHOT 2
 
 static const __u32 hash_len = 32;
 
