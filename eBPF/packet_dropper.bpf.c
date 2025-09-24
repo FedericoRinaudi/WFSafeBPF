@@ -35,7 +35,7 @@
 static const __u32 hash_len = 32;
 
 /* Helper function to check if packet should be skipped */
-static __always_inline int should_skip_packet(struct __sk_buff *skb) {
+static __always_inline __u8 should_skip_packet(struct __sk_buff *skb) {
     if (skb->gso_segs > 1) {
         return 1;
     }
@@ -51,56 +51,35 @@ static __always_inline int should_skip_packet(struct __sk_buff *skb) {
     return 0;
 }
 
-/* Parse packet headers and return packet type */
-static __always_inline int parse_packet(struct __sk_buff *skb, struct ethhdr **eth, struct iphdr **iph, struct tcphdr **tcph) {
-    void *data, *data_end;
-    __u32 ihl;
-    
-    if (bpf_skb_pull_data(skb, sizeof(struct ethhdr) + sizeof(struct iphdr)) < 0)
-        return -1;
-    
-    data = (void *)(long)skb->data;
-    data_end = (void *)(long)skb->data_end;
-    
-    *eth = data;
-    if ((void*)(*eth + 1) > data_end)
-        return -1;
-    
-    if ((*eth)->h_proto != bpf_htons(ETH_P_IP))
-        return 0;
-    
-    *iph = (void*)(*eth + 1);
-    if ((void*)(*iph + 1) > data_end)
-        return -1;
-
-    if ((*iph)->protocol == IPPROTO_TCP) {
-        ihl = (*iph)->ihl * 4;
-        
-        if (bpf_skb_pull_data(skb, sizeof(struct ethhdr) + ihl + sizeof(struct tcphdr)) < 0)
-            return -1;
-        
-        data = (void *)(long)skb->data;
-        data_end = (void *)(long)skb->data_end;
-        *eth = data;
-        *iph = (void*)(*eth + 1);
-        
-        *tcph = (void*)(*iph) + ihl;
-        if ((void*)(*eth + 1) > data_end)
-            return -1;
-        if ((void*)(*iph + 1) > data_end)
-            return -1;
-        if ((void*)(*tcph + 1) > data_end)
-            return -1;
-        
-        return 2;
-    }
-    
-    return 1;   
+/* Extract IP header length, TCP payload offset, and IP total length */
+static __always_inline __u8 extract_from_packet(struct __sk_buff *skb, __u8 *ip_header_len, __u8 *tcp_payload_offset, __u16 *ip_tot_len) {
+    __u8 l4_protocol;
+    __u8 tcp_header_len;
+    if(skb->protocol != bpf_htons(ETH_P_IP))
+        return TC_ACT_OK;
+    if(bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, protocol), &l4_protocol, 1) < 0)
+        return TC_ACT_SHOT;
+    if (l4_protocol != IPPROTO_TCP)
+        return TC_ACT_OK;
+    if(bpf_skb_load_bytes(skb, sizeof(struct ethhdr), ip_header_len, sizeof(__u8)) < 0)
+        return TC_ACT_SHOT;
+    *ip_header_len = (*ip_header_len & 0x0F) * 4;
+    debug_print("[EXTRACT] IP header length: %d bytes", *ip_header_len);
+    if(bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, tot_len), ip_tot_len, sizeof(__u16)) < 0)
+        return TC_ACT_SHOT;
+    *ip_tot_len = bpf_ntohs(*ip_tot_len);
+    debug_print("[EXTRACT] IP total length: %d bytes", *ip_tot_len);
+    if(bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + *ip_header_len + 12, &tcp_header_len, 1) < 0)
+        return TC_ACT_SHOT;
+    tcp_header_len = (tcp_header_len >> 4) * 4;
+    debug_print("[EXTRACT] TCP header length: %d bytes", tcp_header_len);
+    *tcp_payload_offset = sizeof(struct ethhdr) + *ip_header_len + tcp_header_len;
+    return 1;
 }
 
 
 /* Update IP and TCP checksums after packet length change */
-static __always_inline int update_len_and_checksums(struct __sk_buff *skb, __u32 ip_header_len, __u16 old_ip_len, __u16 new_ip_len)
+static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __u16 new_ip_len)
 {
     __be16 new_ip_len_be = bpf_htons(new_ip_len);
     __be16 old_ip_len_be = bpf_htons(old_ip_len); 
@@ -123,7 +102,7 @@ static __always_inline int update_len_and_checksums(struct __sk_buff *skb, __u32
 }
 
 /* Add keyed BLAKE2s authentication tag to packet */
-static __always_inline int add_hmac(struct __sk_buff *skb, __u32 ip_header_len) {
+static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset) {
     __u32 new_len;
     __u32 digest[8];
     __u8 secret_key[32] = {
@@ -133,8 +112,6 @@ static __always_inline int add_hmac(struct __sk_buff *skb, __u32 ip_header_len) 
         0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
     };
     __u8 message[32];
-
-    __u32 tcp_payload_offset = sizeof(struct ethhdr) + ip_header_len + sizeof(struct tcphdr);
     
     debug_print("[ADD_HMAC] Processing packet: len=%d, tcp_payload_offset=%d", skb->len, tcp_payload_offset);
     
@@ -166,7 +143,7 @@ static __always_inline int add_hmac(struct __sk_buff *skb, __u32 ip_header_len) 
 }
 
 /* Remove and verify keyed BLAKE2s authentication tag */
-static __always_inline int remove_hmac(struct __sk_buff *skb, __u32 ip_header_len) {
+static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset) {
     __u8 secret_key[32] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
         0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -177,8 +154,6 @@ static __always_inline int remove_hmac(struct __sk_buff *skb, __u32 ip_header_le
     __u8 received_tag[32];
     __u32 calculated_digest[8];
     __u32 message_start_pos;
-    
-    __u32 tcp_payload_offset = sizeof(struct ethhdr) + ip_header_len + sizeof(struct tcphdr);
     
     debug_print("[REMOVE_HMAC] Processing packet: len=%d, tcp_payload_offset=%d", skb->len, tcp_payload_offset);
     
@@ -220,12 +195,9 @@ static __always_inline int remove_hmac(struct __sk_buff *skb, __u32 ip_header_le
 
 SEC("classifier")
 int handle_ingress(struct __sk_buff *skb) {
-    struct ethhdr *eth;
-    struct iphdr *iph;
-    struct tcphdr *tcph;
     __u16 ip_tot_old;
-    __u32 ip_header_len;
-    int remove_result;
+    __u8 ip_header_len, tcp_payload_offset;
+    __s8 remove_result;
     
     debug_print("[INGRESS] Packet received: len=%d", skb->len);
     
@@ -233,21 +205,19 @@ int handle_ingress(struct __sk_buff *skb) {
         debug_print("[INGRESS] Packet skipped (GSO or oversized)");
         return TC_ACT_OK;
     }
-    
-    int parse_result = parse_packet(skb, &eth, &iph, &tcph);
-    debug_print("[INGRESS] Packet parsing result: %d", parse_result);
-    
-    if (parse_result != 2)
-        return TC_ACT_OK;
-    
-    ip_tot_old = bpf_ntohs(iph->tot_len);
-    ip_header_len = iph->ihl * 4;
+
+    __u8 extraction_result = extract_from_packet(skb, &ip_header_len, &tcp_payload_offset, &ip_tot_old);
+    debug_print("[INGRESS] Packet parsing result: %d", extraction_result);
+
+    if (extraction_result != 1) 
+        return extraction_result; // Non-TCP, lascia intatto
+
     debug_print("[INGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
 
     __u8 i;
     for (i = 0; i < 10; i++) {
         debug_print("[INGRESS] HMAC removal loop iteration %d", i);
-        remove_result = remove_hmac(skb, ip_header_len);
+        remove_result = remove_hmac(skb, tcp_payload_offset);
         debug_print("[INGRESS] remove_hmac result: %d", remove_result);
         
         if (remove_result < 0) {
@@ -278,12 +248,9 @@ int handle_ingress(struct __sk_buff *skb) {
 
 SEC("classifier")
 int handle_egress(struct __sk_buff *skb) {
-    struct ethhdr *eth;
-    struct iphdr *iph;
-    struct tcphdr *tcph;
     __u16 ip_tot_old;
-    __u32 ip_header_len;
-    int hmac_result;
+    __u8 ip_header_len, tcp_payload_offset;
+    __s8 hmac_result;
     
     debug_print("[EGRESS] Packet received: len=%d", skb->len);
     
@@ -292,16 +259,14 @@ int handle_egress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
     
-    int parse_result = parse_packet(skb, &eth, &iph, &tcph);
-    debug_print("[EGRESS] Packet parsing result: %d", parse_result);
-    if (parse_result != 2)
-        return TC_ACT_OK;
+    __u8 extraction_result = extract_from_packet(skb, &ip_header_len, &tcp_payload_offset, &ip_tot_old);
+    debug_print("[EGRESS] Packet parsing result: %d", extraction_result);
+    if (extraction_result != 1) 
+        return extraction_result; // Non-TCP, lascia intatto
     
-    ip_tot_old = bpf_ntohs(iph->tot_len);
-    ip_header_len = iph->ihl * 4;
     debug_print("[EGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
 
-    __u32 random_val = bpf_get_prandom_u32() % 11;
+    __u8 random_val = bpf_get_prandom_u32() % 11;
     debug_print("[EGRESS] Random HMAC count: %d", random_val);
     
     __u8 i;
@@ -312,7 +277,7 @@ int handle_egress(struct __sk_buff *skb) {
             break;
         }
         debug_print("[EGRESS] Adding HMAC iteration %d", i);
-        hmac_result = add_hmac(skb, ip_header_len);
+        hmac_result = add_hmac(skb, tcp_payload_offset);
         debug_print("[EGRESS] add_hmac result: %d", hmac_result);
         if (hmac_result < 0) {
             debug_print("[EGRESS] Error in add_hmac, dropping packet");
