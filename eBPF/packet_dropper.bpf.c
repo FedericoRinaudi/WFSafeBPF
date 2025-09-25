@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
-//#include "vmlinux.h"
-//#include <bpf/bpf_helpers.h>
-//#include <bpf/bpf_endian.h>
-//#include "blake2s.h"
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
-#include <linux/udp.h>
-#include <linux/pkt_cls.h>
+#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
-#include <stddef.h>
 #include "blake2s.h"
+//#include <linux/bpf.h>
+//#include <linux/if_ether.h>
+//#include <linux/ip.h>
+//#include <linux/tcp.h>
+//#include <linux/udp.h>
+//#include <linux/pkt_cls.h>
+//#include <bpf/bpf_helpers.h>
+//#include <bpf/bpf_endian.h>
+//#include <stddef.h>
+//#include "blake2s.h"
 
 #define DEBUG 0
 
@@ -23,11 +23,12 @@
 #define debug_print(fmt, ...) do {} while (0)
 #endif
 
+#define MAX_PKT_SIZE 1500
 
 /* Network protocol constants */
 #define ETH_P_IP    0x0800
 #define IPPROTO_TCP 6
-
+#define ETH_HLEN    14
 /* Traffic Control action codes */  
 #define TC_ACT_OK   0
 #define TC_ACT_SHOT 2
@@ -40,7 +41,7 @@ static __always_inline __u8 should_skip_packet(struct __sk_buff *skb) {
         return 1;
     }
     
-    if (skb->len > 2000) {
+    if (skb->len > MAX_PKT_SIZE) {
         return 1;
     }
     
@@ -79,27 +80,34 @@ static __always_inline __u8 extract_from_packet(struct __sk_buff *skb, __u8 *ip_
 
 
 /* Update IP and TCP checksums after packet length change */
-static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __u16 new_ip_len)
-{
-    __be16 new_ip_len_be = bpf_htons(new_ip_len);
-    __be16 old_ip_len_be = bpf_htons(old_ip_len); 
-    
-    if (bpf_skb_store_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, tot_len),
-                            &new_ip_len_be, sizeof(new_ip_len_be), 0) < 0)
-        return -1;
-    
-    if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check),
-                            old_ip_len_be, new_ip_len_be,
-                            sizeof(__u16)) < 0)
-        return -1;
-
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
-                           old_ip_len - ip_header_len, new_ip_len - ip_header_len,
-                           BPF_F_PSEUDO_HDR | sizeof(__u16)) < 0)
-        return -1;   
-    
-    return 0;
-}
+//static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __u16 new_ip_len)
+//{
+//    __be16 new_ip_len_be = bpf_htons(new_ip_len);
+//    __be16 old_ip_len_be = bpf_htons(old_ip_len); 
+//    
+//    if (bpf_skb_store_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, tot_len),
+//                            &new_ip_len_be, sizeof(new_ip_len_be), BPF_F_RECOMPUTE_CSUM) < 0)
+//        return -1;
+//    
+//    if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check),
+//                            old_ip_len_be, new_ip_len_be,
+//                            sizeof(__u16)) < 0)
+//        return -1;
+//
+//    __u16 zero = 0;
+//    if (bpf_skb_store_bytes(skb,
+//                            sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
+//                            &zero, sizeof(zero),
+//                            BPF_F_RECOMPUTE_CSUM) < 0)
+//        return -1;
+//
+//    //if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
+//    //                       old_ip_len - ip_header_len, new_ip_len - ip_header_len,
+//    //                       BPF_F_PSEUDO_HDR | sizeof(__u16)) < 0)
+//    //    return -1;   
+//    
+//    return 0;
+//}
 
 /* Add keyed BLAKE2s authentication tag to packet */
 static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset) {
@@ -143,7 +151,7 @@ static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_off
 }
 
 /* Remove and verify keyed BLAKE2s authentication tag */
-static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset) {
+static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __u32 message_start_pos) {
     __u8 secret_key[32] = {
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
         0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -153,24 +161,22 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
     __u8 message[32];
     __u8 received_tag[32];
     __u32 calculated_digest[8];
-    __u32 message_start_pos;
     
     debug_print("[REMOVE_HMAC] Processing packet: len=%d, tcp_payload_offset=%d", skb->len, tcp_payload_offset);
     
-    if (skb->len < tcp_payload_offset + 64) {
+    if (message_start_pos < tcp_payload_offset) {
         debug_print("[REMOVE_HMAC] Packet too small for HMAC removal");
         return 0;
     }
-    
-    message_start_pos = skb->len - (hash_len + 32);
+
     debug_print("[REMOVE_HMAC] HMAC message starts at position %d", message_start_pos);
     
     if (bpf_skb_load_bytes(skb, message_start_pos, message, 32) < 0) {
         debug_print("[REMOVE_HMAC] Failed to load HMAC message bytes");
         return -1;
     }
-    
-    if (bpf_skb_load_bytes(skb, skb->len - hash_len, received_tag, hash_len) < 0) {
+
+    if (bpf_skb_load_bytes(skb, message_start_pos + 32, received_tag, hash_len) < 0) {
         debug_print("[REMOVE_HMAC] Failed to load received HMAC tag");
         return -1;
     }
@@ -182,13 +188,7 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
         return 0;
     }
     
-    debug_print("[REMOVE_HMAC] HMAC verified successfully, removing tag");
-    if (bpf_skb_change_tail(skb, skb->len - hash_len, 0) < 0) {
-        debug_print("[REMOVE_HMAC] Failed to shrink packet after HMAC removal");
-        return -1;
-    }
-    
-    debug_print("[REMOVE_HMAC] HMAC successfully removed from packet");
+    debug_print("[REMOVE_HMAC] HMAC verified successfully, need to remove tag");
     return 1;
 }
 
@@ -217,7 +217,7 @@ int handle_ingress(struct __sk_buff *skb) {
     __u8 i;
     for (i = 0; i < 10; i++) {
         debug_print("[INGRESS] HMAC removal loop iteration %d", i);
-        remove_result = remove_hmac(skb, tcp_payload_offset);
+        remove_result = remove_hmac(skb, tcp_payload_offset, skb->len - (32 * (i + 2)));
         debug_print("[INGRESS] remove_hmac result: %d", remove_result);
         
         if (remove_result < 0) {
@@ -235,10 +235,22 @@ int handle_ingress(struct __sk_buff *skb) {
         debug_print("[INGRESS] No HMACs found to remove, packet unchanged");
         return TC_ACT_OK;
     }
-    if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old - i*hash_len) < 0) {
-        debug_print("[INGRESS] Error updating checksums, dropping packet");
-        return TC_ACT_SHOT;
+    if (bpf_skb_change_tail(skb, skb->len - hash_len*i, 0) < 0) {
+        debug_print("[REMOVE_HMAC] Failed to shrink packet after HMAC removal");
+        return -1;
     }
+    
+    debug_print("[REMOVE_HMAC] HMAC successfully removed from packet");
+    //if (bpf_csum_update(skb, 5) < 0) {
+    //    bpf_printk("[INGRESS] Error updating skb checksum");
+    //    return TC_ACT_SHOT;
+    //} else {
+    //    bpf_printk("[INGRESS] Updated skb checksum successfully");
+    //}
+    //if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old - i*hash_len) < 0) {
+    //    debug_print("[INGRESS] Error updating checksums, dropping packet");
+    //    return TC_ACT_SHOT;
+    //}
     bpf_set_hash_invalid(skb);
     bpf_get_hash_recalc(skb);
     debug_print("[INGRESS] Packet processing successful: removed %d HMACs", i);
@@ -268,12 +280,16 @@ int handle_egress(struct __sk_buff *skb) {
 
     __u8 random_val = bpf_get_prandom_u32() % 11;
     debug_print("[EGRESS] Random HMAC count: %d", random_val);
-    
+    random_val += 1; // DEBUG: Garantisce almeno 1 HMAC
     __u8 i;
 
     for (i = 0; i < 10; i++) {
         if (i >= random_val) {
             debug_print("[EGRESS] Stopping at iteration %d (reached random limit %d)", i, random_val);
+            break;
+        }
+        if (skb->len + hash_len > MAX_PKT_SIZE) {
+            debug_print("[EGRESS] Cannot add more HMACs, packet size limit reached");
             break;
         }
         debug_print("[EGRESS] Adding HMAC iteration %d", i);
@@ -295,11 +311,36 @@ int handle_egress(struct __sk_buff *skb) {
     }
 
     debug_print("[EGRESS] Updating checksums for %d added HMACs", i);
-    if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old + i*hash_len) < 0) {
-        debug_print("[EGRESS] Error updating checksums, dropping packet");
-        return TC_ACT_SHOT;
-    }
-
+    //if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old + i*hash_len) < 0) {
+    //    debug_print("[EGRESS] Error updating checksums, dropping packet");
+    //    return TC_ACT_SHOT;
+    //}
+//  
+    //if (i > 0) {
+    //    __u16 old_len = ip_tot_old;
+    //    __u16 new_len = ip_tot_old + i * hash_len;
+    //    // Aggiorna lunghezza IP e checksum L3
+    //    __be16 old_len_be = bpf_htons(old_len);
+    //    __be16 new_len_be = bpf_htons(new_len);
+    //    bpf_skb_store_bytes(skb, ETH_HLEN + offsetof(struct iphdr, tot_len),
+    //                        &new_len_be, sizeof(new_len_be), 0);
+    //    bpf_l3_csum_replace(skb, ETH_HLEN + offsetof(struct iphdr, check),
+    //                        old_len_be, new_len_be, sizeof(__u16));
+    //    // Aggiorna checksum TCP pseudo-header (lunghezza TCP)
+    //    __be16 old_tcp_len_be = bpf_htons(old_len - ip_header_len);
+    //    __be16 new_tcp_len_be = bpf_htons(new_len - ip_header_len);
+    //    bpf_l4_csum_replace(skb, ETH_HLEN + ip_header_len + offsetof(struct tcphdr, check),
+    //                        old_tcp_len_be, new_tcp_len_be,
+    //                        BPF_F_PSEUDO_HDR | sizeof(__u16));
+    //    // Calcola checksum dei nuovi tag HMAC aggiunti
+    //    __wsum diff_sum = 0;
+    //    bpf_csum_diff(NULL, 0, digest_be, hash_len, diff_sum);
+    //    // Applica differenza al checksum TCP
+    //    bpf_l4_csum_replace(skb, ETH_HLEN + ip_header_len + offsetof(struct tcphdr, check),
+    //                        0, diff_sum, BPF_F_MARK_MANGLED_0 | 0);
+    //    // Aggiorna checksum completo nello skb (se presente)
+    //    bpf_csum_update(skb, diff_sum + /*eventuale diff pseudo-header*/ 0);
+    //}
     bpf_set_hash_invalid(skb);
     bpf_get_hash_recalc(skb);
     debug_print("[EGRESS] Packet processing successful: added %d HMACs", i);
