@@ -287,7 +287,7 @@ int handle_ingress(struct __sk_buff *skb) {
     debug_print("[INGRESS] Packet parsing result: %d", extraction_result);
 
     if (extraction_result != 1) 
-        return extraction_result; // Non-TCP, lascia intatto
+        return extraction_result;
 
     debug_print("[INGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
 
@@ -319,18 +319,11 @@ int handle_ingress(struct __sk_buff *skb) {
     }
     
     debug_print("[REMOVE_HMAC] HMAC successfully removed from packet");
-    //if (bpf_csum_update(skb, 5) < 0) {
-    //    bpf_printk("[INGRESS] Error updating skb checksum");
-    //    return TC_ACT_SHOT;
-    //} else {
-    //    bpf_printk("[INGRESS] Updated skb checksum successfully");
-    //}
+
     if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old - i*hash_len, acc) < 0) {
         debug_print("[INGRESS] Error updating checksums, dropping packet");
         return TC_ACT_SHOT;
     }
-    bpf_set_hash_invalid(skb);
-    bpf_get_hash_recalc(skb);
     debug_print("[INGRESS] Packet processing successful: removed %d HMACs", i);
     return TC_ACT_OK;
 }
@@ -367,7 +360,7 @@ int handle_egress(struct __sk_buff *skb) {
             break;
         }
         if (skb->len + hash_len > MAX_PKT_SIZE) {
-            debug_print("[EGRESS] Cannot add more HMACs, packet size limit reached");
+            debug_print("[EGRESS] Cannot add mosudo apt install tmux -yre HMACs, packet size limit reached");
             break;
         }
         debug_print("[EGRESS] Adding HMAC iteration %d", i);
@@ -393,34 +386,6 @@ int handle_egress(struct __sk_buff *skb) {
         debug_print("[EGRESS] Error updating checksums, dropping packet");
         return TC_ACT_SHOT;
     }
-//  
-    //if (i > 0) {
-    //    __u16 old_len = ip_tot_old;
-    //    __u16 new_len = ip_tot_old + i * hash_len;
-    //    // Aggiorna lunghezza IP e checksum L3
-    //    __be16 old_len_be = bpf_htons(old_len);
-    //    __be16 new_len_be = bpf_htons(new_len);
-    //    bpf_skb_store_bytes(skb, ETH_HLEN + offsetof(struct iphdr, tot_len),
-    //                        &new_len_be, sizeof(new_len_be), 0);
-    //    bpf_l3_csum_replace(skb, ETH_HLEN + offsetof(struct iphdr, check),
-    //                        old_len_be, new_len_be, sizeof(__u16));
-    //    // Aggiorna checksum TCP pseudo-header (lunghezza TCP)
-    //    __be16 old_tcp_len_be = bpf_htons(old_len - ip_header_len);
-    //    __be16 new_tcp_len_be = bpf_htons(new_len - ip_header_len);
-    //    bpf_l4_csum_replace(skb, ETH_HLEN + ip_header_len + offsetof(struct tcphdr, check),
-    //                        old_tcp_len_be, new_tcp_len_be,
-    //                        BPF_F_PSEUDO_HDR | sizeof(__u16));
-    //    // Calcola checksum dei nuovi tag HMAC aggiunti
-    //    __wsum diff_sum = 0;
-    //    bpf_csum_diff(NULL, 0, digest_be, hash_len, diff_sum);
-    //    // Applica differenza al checksum TCP
-    //    bpf_l4_csum_replace(skb, ETH_HLEN + ip_header_len + offsetof(struct tcphdr, check),
-    //                        0, diff_sum, BPF_F_MARK_MANGLED_0 | 0);
-    //    // Aggiorna checksum completo nello skb (se presente)
-    //    bpf_csum_update(skb, diff_sum + /*eventuale diff pseudo-header*/ 0);
-    //}
-    bpf_set_hash_invalid(skb);
-    bpf_get_hash_recalc(skb);
     debug_print("[EGRESS] Packet processing successful: added %d HMACs", i);
     return TC_ACT_OK;
 }
