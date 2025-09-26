@@ -258,7 +258,7 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
 }
 
 
-__u8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
+__s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
     __u8 i;
     __wsum acc = 0;
     __s8 remove_result;
@@ -302,7 +302,7 @@ __u8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_
     return 1;
 }
 
-__u8 add_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
+__s8 add_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
     __s8 hmac_result;
     __u8 i;
     __wsum acc = 0;
