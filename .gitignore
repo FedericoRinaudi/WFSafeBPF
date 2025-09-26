@@ -17,6 +17,7 @@
 
 # eBPF executables
 loader
+blake2s_test_loader
 
 # Build directories
 build/
