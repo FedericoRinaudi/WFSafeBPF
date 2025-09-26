@@ -178,15 +178,9 @@ static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8
 }
 
 /* Add keyed BLAKE2s authentication tag to packet */
-static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __wsum *acc) {
+static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __wsum *acc, __u8 *secret_key) {
     __u32 new_len;
     __u32 digest[8];
-    __u8 secret_key[32] = {
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
-    };
     __u8 message[32];
     
     debug_print("[ADD_HMAC] Processing packet: len=%d, tcp_payload_offset=%d", skb->len, tcp_payload_offset);
@@ -223,13 +217,7 @@ static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_off
 }
 
 /* Remove and verify keyed BLAKE2s authentication tag */
-static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __u32 message_start_pos, __wsum *acc) {
-    __u8 secret_key[32] = {
-        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
-    };
+static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __u32 message_start_pos, __wsum *acc, __u8 *secret_key) {
     __u8 message[32];
     __u8 received_tag[32];
     __u32 calculated_digest[8];
@@ -270,11 +258,104 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
 }
 
 
+__u8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
+    __u8 i;
+    __wsum acc = 0;
+    __s8 remove_result;
+    __u8 secret_key[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+    };
+    for (i = 0; i < 10; i++) {
+        debug_print("[INGRESS] HMAC removal loop iteration %d", i);
+        remove_result = remove_hmac(skb, tcp_payload_offset, skb->len - (32 * (i + 2)), &acc, secret_key);
+        debug_print("[INGRESS] remove_hmac result: %d", remove_result);
+        
+        if (remove_result < 0) {
+            debug_print("[INGRESS] Error in remove_hmac, dropping packet");
+            return -1;
+        }
+
+        if (remove_result == 0) {
+            break;
+        }
+    }
+
+    debug_print("[INGRESS] HMAC processing complete, updating checksums");
+    if(i == 0) {
+        debug_print("[INGRESS] No HMACs found to remove, packet unchanged");
+        return 0;
+    }
+    if (bpf_skb_change_tail(skb, skb->len - hash_len*i, 0) < 0) {
+        debug_print("[REMOVE_HMAC] Failed to shrink packet after HMAC removal");
+        return -1;
+    }
+    
+    debug_print("[REMOVE_HMAC] HMAC successfully removed from packet");
+
+    if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old - i*hash_len, acc) < 0) {
+        debug_print("[INGRESS] Error updating checksums, dropping packet");
+        return -1;
+    }
+    return 1;
+}
+
+__u8 add_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
+    __s8 hmac_result;
+    __u8 i;
+    __wsum acc = 0;
+    __u8 random_val = bpf_get_prandom_u32() % 11;
+    __u8 secret_key[32] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+    };
+    debug_print("[EGRESS] Random HMAC count: %d", random_val);
+    for (i = 0; i < 10; i++) {
+        if (i >= random_val) {
+            debug_print("[EGRESS] Stopping at iteration %d (reached random limit %d)", i, random_val);
+            break;
+        }
+        if (skb->len + hash_len > MAX_PKT_SIZE) {
+            debug_print("[EGRESS] Cannot add mosudo apt install tmux -yre HMACs, packet size limit reached");
+            break;
+        }
+        debug_print("[EGRESS] Adding HMAC iteration %d", i);
+        hmac_result = add_hmac(skb, tcp_payload_offset, &acc, secret_key);
+        debug_print("[EGRESS] add_hmac result: %d", hmac_result);
+        if (hmac_result < 0) {
+            debug_print("[EGRESS] Error in add_hmac, dropping packet");
+            return -1;
+        }
+        if (hmac_result == 0) {
+            debug_print("[EGRESS] Cannot add more HMACs, stopping");
+            break;
+        }
+    }
+    
+    if(i == 0) {
+        debug_print("[EGRESS] No HMACs added to packet");
+        return 0;
+    }
+
+    debug_print("[EGRESS] Updating checksums for %d added HMACs", i);
+    if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old + i*hash_len, acc) < 0) {
+        debug_print("[EGRESS] Error updating checksums, dropping packet");
+        return -1;
+    }
+
+    return 1;
+
+}
+
+
 SEC("classifier")
 int handle_ingress(struct __sk_buff *skb) {
     __u16 ip_tot_old;
     __u8 ip_header_len, tcp_payload_offset;
-    __s8 remove_result;
     
     debug_print("[INGRESS] Packet received: len=%d", skb->len);
     
@@ -286,45 +367,17 @@ int handle_ingress(struct __sk_buff *skb) {
     __u8 extraction_result = extract_from_packet(skb, &ip_header_len, &tcp_payload_offset, &ip_tot_old);
     debug_print("[INGRESS] Packet parsing result: %d", extraction_result);
 
-    if (extraction_result != 1) 
+    if (extraction_result != 1)
         return extraction_result;
 
     debug_print("[INGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
 
-    __u8 i;
-    __wsum acc = 0;
-    for (i = 0; i < 10; i++) {
-        debug_print("[INGRESS] HMAC removal loop iteration %d", i);
-        remove_result = remove_hmac(skb, tcp_payload_offset, skb->len - (32 * (i + 2)), &acc);
-        debug_print("[INGRESS] remove_hmac result: %d", remove_result);
-        
-        if (remove_result < 0) {
-            debug_print("[INGRESS] Error in remove_hmac, dropping packet");
-            return TC_ACT_SHOT;
-        }
-
-        if (remove_result == 0) {
-            break;
-        }
-    }
-
-    debug_print("[INGRESS] HMAC processing complete, updating checksums");
-    if(i == 0) {
-        debug_print("[INGRESS] No HMACs found to remove, packet unchanged");
-        return TC_ACT_OK;
-    }
-    if (bpf_skb_change_tail(skb, skb->len - hash_len*i, 0) < 0) {
-        debug_print("[REMOVE_HMAC] Failed to shrink packet after HMAC removal");
-        return -1;
-    }
-    
-    debug_print("[REMOVE_HMAC] HMAC successfully removed from packet");
-
-    if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old - i*hash_len, acc) < 0) {
-        debug_print("[INGRESS] Error updating checksums, dropping packet");
+    if (remove_all_padding(skb, tcp_payload_offset, ip_header_len, ip_tot_old) < 0) {
+        debug_print("[INGRESS] Error removing padding, dropping packet");
         return TC_ACT_SHOT;
     }
-    debug_print("[INGRESS] Packet processing successful: removed %d HMACs", i);
+    debug_print("[INGRESS] Packet processing successful");
+
     return TC_ACT_OK;
 }
 
@@ -333,7 +386,6 @@ SEC("classifier")
 int handle_egress(struct __sk_buff *skb) {
     __u16 ip_tot_old;
     __u8 ip_header_len, tcp_payload_offset;
-    __s8 hmac_result;
     
     debug_print("[EGRESS] Packet received: len=%d", skb->len);
     
@@ -349,44 +401,13 @@ int handle_egress(struct __sk_buff *skb) {
     
     debug_print("[EGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
 
-    __u8 random_val = bpf_get_prandom_u32() % 11;
-    debug_print("[EGRESS] Random HMAC count: %d", random_val);
-    random_val += 1; // DEBUG: Garantisce almeno 1 HMAC
-    __u8 i;
-    __wsum acc = 0;
-    for (i = 0; i < 10; i++) {
-        if (i >= random_val) {
-            debug_print("[EGRESS] Stopping at iteration %d (reached random limit %d)", i, random_val);
-            break;
-        }
-        if (skb->len + hash_len > MAX_PKT_SIZE) {
-            debug_print("[EGRESS] Cannot add mosudo apt install tmux -yre HMACs, packet size limit reached");
-            break;
-        }
-        debug_print("[EGRESS] Adding HMAC iteration %d", i);
-        hmac_result = add_hmac(skb, tcp_payload_offset, &acc);
-        debug_print("[EGRESS] add_hmac result: %d", hmac_result);
-        if (hmac_result < 0) {
-            debug_print("[EGRESS] Error in add_hmac, dropping packet");
-            return TC_ACT_SHOT;
-        }
-        if (hmac_result == 0) {
-            debug_print("[EGRESS] Cannot add more HMACs, stopping");
-            break;
-        }
-    }
-    
-    if(i == 0) {
-        debug_print("[EGRESS] No HMACs added to packet");
-        return TC_ACT_OK;
-    }
+    debug_print("[EGRESS] Packet processing successful: added %d HMACs", i);
 
-    debug_print("[EGRESS] Updating checksums for %d added HMACs", i);
-    if (update_len_and_checksums(skb, ip_header_len, ip_tot_old, ip_tot_old + i*hash_len, acc) < 0) {
-        debug_print("[EGRESS] Error updating checksums, dropping packet");
+    if (add_all_padding(skb, tcp_payload_offset, ip_header_len, ip_tot_old) < 0) {
+        debug_print("[EGRESS] Error adding padding, dropping packet");
         return TC_ACT_SHOT;
     }
-    debug_print("[EGRESS] Packet processing successful: added %d HMACs", i);
+
     return TC_ACT_OK;
 }
 
