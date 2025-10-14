@@ -13,6 +13,7 @@
 #include <bpf/libbpf.h>
 #include <net/if.h>
 #include <linux/pkt_cls.h>
+#include <linux/types.h>
 #include <signal.h>
 
 static int ifindex_g;
@@ -73,11 +74,6 @@ int main(int argc, char **argv) {
     // Find programs
     ing_prog = bpf_object__find_program_by_name(bpf_obj, "handle_ingress");
     eg_prog = bpf_object__find_program_by_name(bpf_obj, "handle_egress");
-    if (!ing_prog || !eg_prog) { 
-        fprintf(stderr, "Failed to find BPF programs\n"); 
-        bpf_object__close(bpf_obj); 
-        return 1; 
-    }
     
     // Create TC hook
     DECLARE_LIBBPF_OPTS(bpf_tc_hook, hook, .ifindex = ifindex_g, 

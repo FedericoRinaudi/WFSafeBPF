@@ -1,7 +1,7 @@
 # wf-eval/ebpf/Makefile
 # Build: BPF object + user-space loader (libbpf)
 
-BPF_CLANG ?= clang-15
+BPF_CLANG ?= clang-18
 BPF_CFLAGS := -O2 -g -Wall -Werror -target bpf
 
 # Arch mapping for __TARGET_ARCH_*
