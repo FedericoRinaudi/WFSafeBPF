@@ -17,8 +17,7 @@ static __always_inline __s8 fragmentation_clone_to_packet_internal(struct __sk_b
     
     __u16 prev_payload_len = skb->mark & 0xFFFF;
     __u8 ip_header_len, tcp_header_len;
-    __u16 ip_total_len;
-    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_total_len);
+    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if(extract_result != 1)
         return extract_result;
     
@@ -102,11 +101,10 @@ static __always_inline __s8 fragmentation_clone_to_packet_internal(struct __sk_b
 /* Fragment packet into multiple smaller packets */
 static __always_inline __s8 fragment_packet_internal(struct __sk_buff *skb) {
     __u8 ip_header_len, tcp_header_len;
-    __u16 ip_total_len;
     
     debug_print("[FRAGMENT] Entry: len=%u, mark=%u", skb->len, skb->mark);
     
-    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_total_len);
+    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if(extract_result != 1)
         return extract_result;
     

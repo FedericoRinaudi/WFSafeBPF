@@ -71,11 +71,10 @@ int add_padding(struct __sk_buff *skb) {
     }
     __s8 hmac_result;
     __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
-    __u16 ip_tot_old;
     __u8 random_val = bpf_get_prandom_u32() % 11;
     __u8 secret_key[32] = SECRET_KEY_INIT;
     
-    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
+    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if (extract_result != 1) {
         debug_print("[EGRESS] Non-TCP/IP packet or extraction error, skipping HMAC addition");
         return extract_result;
