@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-2.0
+#include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+
+/* Include modular headers */
+#include "config.h"
+#include "blake2s.h"
+#include "network_utils.h"
+#include "checksum.h"
+#include "hmac.h"
+#include "padding.h"
+#include "fragmentation.h"
+
+// Forward declarations for tail call map
+SEC("classifier") int add_padding(struct __sk_buff *skb);
+SEC("classifier") int fragment_packet(struct __sk_buff *skb);
+SEC("classifier") int fragmentation_clone_to_packet(struct __sk_buff *skb);
+SEC("classifier") int recompute_tcp_checksum(struct __sk_buff *skb);
+
+// Tail call program array map
+struct {
+     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+     __uint(key_size, sizeof(u32));
+     __uint(max_entries, 4);
+     __array(values, u32 (void *));
+ } progs_eg SEC(".maps") = {
+     .values = {
+         [0] = (void *)&add_padding,
+         [1] = (void *)&fragment_packet,
+         [2] = (void *)&fragmentation_clone_to_packet,
+         [3] = (void *)&recompute_tcp_checksum,
+     },
+ };
+
+/* eBPF program sections using modular functions */
+
+SEC("classifier")
+int recompute_tcp_checksum(struct __sk_buff *skb) {
+    return recompute_tcp_checksum_internal(skb);
+}
+
+SEC("classifier")
+int fragmentation_clone_to_packet(struct __sk_buff *skb) {
+    __s8 result = fragmentation_clone_to_packet_internal(skb);
+    if (result == TC_ACT_OK || result == TC_ACT_SHOT)
+        return result;
+    
+    // Continue with fragmentation if result is 0
+    debug_print("[FRAG_CLONE] Tail call to fragment_packet");
+    bpf_tail_call(skb, &progs_eg, 1);
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
+int fragment_packet(struct __sk_buff *skb) {
+    __s8 result = fragment_packet_internal(skb);
+    if (result == TC_ACT_OK || result == TC_ACT_SHOT)
+        return result;
+    
+    // Continue to add_padding if result is 0
+    debug_print("[FRAGMENT] Tail call to add_padding");
+    bpf_tail_call(skb, &progs_eg, 0);
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
+int add_padding(struct __sk_buff *skb) {
+    if((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_PADDING){
+        goto checksum;
+    }
+    __s8 hmac_result;
+    __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
+    __u16 ip_tot_old;
+    __u8 random_val = bpf_get_prandom_u32() % 11;
+    __u8 secret_key[32] = SECRET_KEY_INIT;
+    
+    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
+    if (extract_result != 1) {
+        debug_print("[EGRESS] Non-TCP/IP packet or extraction error, skipping HMAC addition");
+        return extract_result;
+    }
+    tcp_payload_offset = sizeof(struct ethhdr) + ip_header_len + tcp_header_len;
+    debug_print("[EGRESS] Random HMAC count: %d", random_val);
+    if(skb->len < tcp_payload_offset + HASH_LEN) {
+        debug_print("[EGRESS] Packet too small for HMAC addition, returning 0");
+        return TC_ACT_OK;
+    }
+    for (i = 0; i < 10; i++) {
+        if (i >= random_val) {
+            debug_print("[EGRESS] Stopping at iteration %d (reached random limit %d)", i, random_val);
+            break;
+        }
+        if (skb->len + HASH_LEN > MAX_PKT_SIZE) {
+            debug_print("[EGRESS] Cannot add more HMACs, packet size limit reached");
+            break;
+        }
+        debug_print("[EGRESS] Adding HMAC iteration %d", i);
+        hmac_result = add_hmac(skb, tcp_payload_offset, secret_key);
+        debug_print("[EGRESS] add_hmac result: %d", hmac_result);
+        if (hmac_result < 0) {
+            debug_print("[EGRESS] Error in add_hmac, dropping packet");
+            return TC_ACT_SHOT;
+        }
+        if (hmac_result == 0) {
+            debug_print("[EGRESS] Cannot add more HMACs, stopping");
+            break;
+        }
+    }
+    
+    if(i == 0) {
+        debug_print("[EGRESS] No HMACs added to packet");
+        return TC_ACT_OK;
+    }
+
+    skb->mark = 1;
+checksum: 
+    if (skb->mark == 1)
+        bpf_tail_call(skb, &progs_eg, 3); // recompute_tcp_checksum
+
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
+int handle_ingress(struct __sk_buff *skb) {
+    __u16 ip_tot_old;
+    __u8 ip_header_len, tcp_header_len;
+    
+    bpf_printk("Packet received: len=%d", skb->len);
+    
+    debug_print("[INGRESS] Packet received: len=%d", skb->len);
+    
+    if (should_skip_packet(skb)) {
+        debug_print("[INGRESS] Packet skipped (GSO or oversized)");
+        return TC_ACT_OK;
+    }
+
+    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
+    if(extract_result != 1) {
+        debug_print("[INGRESS] Non-TCP/IP packet or extraction error, skipping HMAC removal");
+        return extract_result;
+    }
+
+    debug_print("[INGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
+
+    if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old) < 0) {
+        debug_print("[INGRESS] Error removing padding, dropping packet");
+        return TC_ACT_SHOT;
+    }
+    debug_print("[INGRESS] Packet processing successful");
+
+    return TC_ACT_OK;
+}
+
+
+SEC("classifier")
+int handle_egress(struct __sk_buff *skb) {
+    
+    if(skb->mark == 0)
+        bpf_printk("Sending packet: len=%d", skb->len);
+    debug_print("[EGRESS] Packet received: len=%d", skb->len);
+    
+    if (should_skip_packet(skb)) {
+        debug_print("[EGRESS] Packet skipped (GSO or oversized)");
+        return TC_ACT_OK;
+    }
+
+    bpf_tail_call(skb, &progs_eg, 2); // fragmentation_clone_to_packet
+
+    return TC_ACT_OK;
+}
+
+char LICENSE[] SEC("license") = "GPL";

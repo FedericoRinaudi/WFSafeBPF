@@ -20,16 +20,16 @@ UCFLAGS := -O2 -g -Wall
 ULIBS := -lbpf -lelf -lz
 
 # Default target - build everything
-all: packet-dropper blake2s-test
+all: wfsafebpf blake2s-test
 
-# Packet dropper components
-packet-dropper: packet_dropper.bpf.o loader
+# WFSafe BPF components
+wfsafebpf: wfsafebpf.bpf.o loader
 
 # Blake2s test components  
 blake2s-test: blake2s_test.bpf.o blake2s_test_loader
 
 # Individual build rules
-packet_dropper.bpf.o: packet_dropper.bpf.c
+wfsafebpf.bpf.o: wfsafebpf.bpf.c config.h network_utils.h checksum.h hmac.h padding.h fragmentation.h blake2s.h vmlinux.h
 	$(BPF_CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 loader: loader.c
@@ -50,4 +50,4 @@ test: blake2s-test
 clean:
 	rm -f *.bpf.o loader blake2s_test_loader
 
-.PHONY: all packet-dropper blake2s-test test clean
+.PHONY: all wfsafebpf blake2s-test test clean
