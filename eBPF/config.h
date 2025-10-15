@@ -12,7 +12,7 @@
 
 /* Packet size limits */
 #define MAX_PKT_SIZE 1500
-#define FRAG_BUFF_MAX_SIZE 200
+#define FRAG_BUFF_MAX_SIZE 300
 
 /* Probability thresholds (0-100) */
 #define PROBABILITY_OF_FRAGMENTATION 30
