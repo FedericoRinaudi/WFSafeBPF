@@ -6,23 +6,25 @@
 #include <bpf/bpf_endian.h>
 #include "config.h"
 #include "network_utils.h"
+#include "checksum.h"
 
 /* Clone fragment to packet - moves fragment data to the beginning of the packet */
-static __always_inline __s8 fragmentation_clone_to_packet_internal(struct __sk_buff *skb) {
+static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_buff *skb) {
     debug_print("[FRAG_CLONE] Entry: mark=%u, len=%u", skb->mark, skb->len);
     
     /* Fragment info from skb->mark */
     if(skb->mark <= 32)
-        return 0; // Signal to continue with fragmentation
+        return 1; // Signal to continue with fragmentation
     
     __u16 prev_payload_len = skb->mark & 0xFFFF;
+    __u16 old_ip_len, new_ip_len;
     __u8 ip_header_len, tcp_header_len;
-    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
+    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &old_ip_len);
     if(extract_result != 1)
         return extract_result;
     
     debug_print("[FRAG_CLONE] Headers: ip_len=%u, tcp_len=%u", ip_header_len, tcp_header_len);
-    
+
     /* Calculate packet structure offsets */
     __u8 tcp_payload_offset = sizeof(struct ethhdr) + ip_header_len + tcp_header_len;
     __u16 fragment_start = tcp_payload_offset + prev_payload_len;
@@ -72,7 +74,14 @@ static __always_inline __s8 fragmentation_clone_to_packet_internal(struct __sk_b
         debug_print("[FRAG_CLONE] ERROR: Failed to change tail");
         return TC_ACT_SHOT;
     }
+
+    new_ip_len = skb->len - ETH_HLEN;
     
+    if(update_ip_len_and_csum(skb, ip_header_len, old_ip_len, new_ip_len) < 0) {
+        debug_print("[FRAG_CLONE] ERROR: Failed to update IP len and csum");
+        return TC_ACT_SHOT;
+    }
+
     /* Update TCP sequence number for this fragment */
     __be32 tcp_seq;
     if(bpf_skb_load_bytes(skb, ETH_HLEN + ip_header_len + offsetof(struct tcphdr, seq), 
@@ -95,16 +104,17 @@ static __always_inline __s8 fragmentation_clone_to_packet_internal(struct __sk_b
     debug_print("[FRAG_CLONE] Success: packet resized, clearing mark");
     skb->mark = 1; // Clear mark after fragmentation
     
-    return 0; // Signal to continue with fragmentation
+    return 1; // Signal to continue with fragmentation
 }
 
 /* Fragment packet into multiple smaller packets */
-static __always_inline __s8 fragment_packet_internal(struct __sk_buff *skb) {
+static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     __u8 ip_header_len, tcp_header_len;
+    __u16 old_ip_len, new_ip_len;
     
     debug_print("[FRAGMENT] Entry: len=%u, mark=%u", skb->len, skb->mark);
     
-    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
+    __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &old_ip_len);
     if(extract_result != 1)
         return extract_result;
     
@@ -143,6 +153,13 @@ static __always_inline __s8 fragment_packet_internal(struct __sk_buff *skb) {
             return TC_ACT_SHOT;
         }
     }
+
+    new_ip_len = skb->len - ETH_HLEN;
+
+    if(update_ip_len_and_csum(skb, ip_header_len, old_ip_len, new_ip_len) < 0) {
+        debug_print("[FRAG_CLONE] ERROR: Failed to update IP len and csum");
+        return TC_ACT_SHOT;
+    }
     
     if(i != 0) {
         debug_print("[FRAGMENT] Created %u fragments, setting mark=1", i);
@@ -151,7 +168,7 @@ static __always_inline __s8 fragment_packet_internal(struct __sk_buff *skb) {
         debug_print("[FRAGMENT] No fragments created");
     }
 
-    return 0; // Success, continue to add_padding
+    return 1; // Success, continue to add_padding
 }
 
 #endif // __FRAGMENTATION_H

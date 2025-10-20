@@ -7,9 +7,7 @@
 #include "config.h"
 #include "network_utils.h"
 
-/* Update IP and TCP checksums after packet length change */
-static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __u16 new_ip_len, __wsum acc)
-{
+static __always_inline __s8 update_ip_len_and_csum(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __u16 new_ip_len) {
     __be16 new_ip_len_be = bpf_htons(new_ip_len);
     __be16 old_ip_len_be = bpf_htons(old_ip_len); 
     
@@ -20,6 +18,17 @@ static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8
     if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check),
                             old_ip_len_be, new_ip_len_be,
                             sizeof(__u16)) < 0)
+        return -1;
+    
+    return 0;
+}
+
+/* Update IP and TCP checksums after packet length change */
+static __always_inline __s8 update_checksums_inc(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __wsum acc)
+{
+    __u16 new_ip_len = skb->len - ETH_HLEN;
+
+    if (update_ip_len_and_csum(skb, ip_header_len, old_ip_len, new_ip_len) < 0)
         return -1;
 
     __u16 old_tcp_len = old_ip_len - ip_header_len;
@@ -39,6 +48,24 @@ static __always_inline __s8 update_len_and_checksums(struct __sk_buff *skb, __u8
     return 0;
 }
 
+static __always_inline __s8 update_checksums_seq_num(struct __sk_buff *skb, __u8 ip_header_len, __u32 old_seq_num, __u32 new_seq_num) {
+    __be32 old_seq_num_be = bpf_htonl(old_seq_num);
+    __be32 new_seq_num_be = bpf_htonl(new_seq_num);
+    return bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
+                           old_seq_num_be, new_seq_num_be,
+                           0) < 0;
+}
+
+static __always_inline __s8 update_checksums_ack_num(struct __sk_buff *skb, __u8 ip_header_len, __u32 old_ack_num, __u32 new_ack_num) {
+    __be32 old_ack_num_be = bpf_htonl(old_ack_num);
+    __be32 new_ack_num_be = bpf_htonl(new_ack_num);
+    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
+                           old_ack_num_be, new_ack_num_be,
+                           0) < 0)
+        return -1;
+    return 0;
+}
+
 /* Recompute TCP checksum for the entire packet */
 static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *skb) {
 
@@ -54,18 +81,11 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
     __u32 bytes_remaining = tcp_payload_len;
     __u16 ip_total_len_new = skb->len - ETH_HLEN;
     debug_print("[RECOMPUTE_CSUM] IP total length: old=%u, new=%u", ip_total_len_old, ip_total_len_new);
-    __be16 ip_total_len_new_be = bpf_htons(ip_total_len_new);
-    __be16 ip_total_len_old_be = bpf_htons(ip_total_len_old);
     __sum16 old_tcp_check;
     if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check), &old_tcp_check, sizeof(old_tcp_check)) < 0)
         return TC_ACT_SHOT;
-    if (bpf_skb_store_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, tot_len),
-                            &ip_total_len_new_be, sizeof(ip_total_len_new_be), 0) < 0)
-        return TC_ACT_SHOT;
-    if (bpf_l3_csum_replace(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, check),
-                            ip_total_len_old_be, ip_total_len_new_be,
-                            sizeof(__u16)) < 0)
-        return TC_ACT_SHOT;
+    if (update_ip_len_and_csum(skb, ip_header_len, ip_total_len_old, ip_total_len_new) < 0)
+        return -1;
 
 
    __u8 chunk;

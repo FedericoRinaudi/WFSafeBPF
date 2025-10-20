@@ -11,7 +11,7 @@
 #endif
 
 /* Packet size limits */
-#define MAX_PKT_SIZE 1500
+#define MAX_PKT_SIZE 1600
 #define FRAG_BUFF_MAX_SIZE 300
 
 /* Probability thresholds (0-100) */
@@ -26,6 +26,7 @@
 /* Traffic Control action codes */  
 #define TC_ACT_OK   0
 #define TC_ACT_SHOT 2
+#define TC_ACT_REDIRECT 7
 
 /* BLAKE2s authentication tag size */
 #define HASH_LEN 32
