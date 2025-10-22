@@ -8,6 +8,7 @@
 #include "network_utils.h"
 #include "checksum.h"
 #include "hmac.h"
+#include "skb_mark.h"
 
 /* Remove all padding HMACs from packet */
 static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, __wsum *acc) {
@@ -40,6 +41,7 @@ static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_p
         debug_print("[INGRESS] No HMACs found to remove, packet unchanged");
         return 0;
     }
+    //bpf_printk("removed %d padding", HASH_LEN*i);
     if (bpf_skb_change_tail(skb, skb->len - HASH_LEN*i, 0) < 0) {
         debug_print("[REMOVE_HMAC] Failed to shrink packet after HMAC removal");
         return -1;
@@ -91,13 +93,14 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
             break;
         }
     }
-    
     if(i == 0) {
         debug_print("[EGRESS] No HMACs added to packet");
         return 1;
     }
-
-    skb->mark = 1;
+    //bpf_printk("added %d padding", HASH_LEN*i);
+    
+    // Set checksum flag to indicate checksum recalculation is needed
+    skb_mark_set_checksum_flag(skb, 1);
 
     return 1;
 }
