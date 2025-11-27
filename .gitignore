@@ -85,4 +85,10 @@ Thumbs.db
 *.backup
 11
 
+# Rust/Cargo
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
 vmlinux.h

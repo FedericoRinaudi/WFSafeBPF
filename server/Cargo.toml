@@ -1,0 +1,11 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libbpf-rs = "0.25.0"
+rocket = "0.5.1"
+nix = { version = "0.29", features = ["net"] }
+[build-dependencies]
+libbpf-cargo = "0.25.0"
