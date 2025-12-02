@@ -11,12 +11,9 @@
 
 /* Clone fragment to packet - moves fragment data to the beginning of the packet */
 static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_buff *skb) {
-    debug_print("[FRAG_CLONE] Entry: mark=%u, len=%u", skb->mark, skb->len);
-    
     /* Extract fragment info from skb->mark */
     __u16 payload_len = skb_mark_get_frag_payload_len(skb);
     if(payload_len == 0) {
-        debug_print("[FRAG_CLONE] No fragment payload length set, nothing to clone");
         return 1; // Nothing to do
     }
 
@@ -27,6 +24,8 @@ static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_b
         return result;
 
     __u32 new_packet_len = ETH_HLEN + ip_header_len + tcp_header_len + payload_len;
+    
+    debug_print("[FRAG_CLONE] Clone resized to %u bytes", new_packet_len);
     
     if(bpf_skb_change_tail(skb, new_packet_len, 0) < 0) {
         debug_print("[FRAG_CLONE] ERROR: Failed to change tail");
@@ -46,12 +45,10 @@ static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_b
     return 1; // Signal to continue with fragmentation
 }
 
-/* Fragment packet into multiple smaller packets */
+
 static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     __u8 ip_header_len, tcp_header_len;
     __u16 old_ip_len, new_ip_len;
-    
-    debug_print("[FRAGMENT] Entry: len=%u, mark=%u", skb->len, skb->mark);
     
     __u8 result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &old_ip_len);
     if(result != 1)
@@ -62,16 +59,39 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
                              + (__u32)tcp_header_len;
     __u16 payload_len = skb->len - tcp_payload_offset;
     
-    debug_print("[FRAGMENT] Headers: ip_len=%u, tcp_len=%u, payload_len=%u", 
-                ip_header_len, tcp_header_len, payload_len);
-    
     // Check if we should fragment
+    #ifndef DEBUG
     if ((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_FRAGMENTATION || payload_len < 64 || skb_mark_get_redirect_count(skb) > 8 ) {
+        bpf_printk("[FRAGMENT] Skipping fragmentation: probability check or small payload (%u bytes, count=%u)", payload_len, skb_mark_get_redirect_count(skb));
         return 1; // No fragmentation for small payloads
     }
+    #else
+    __u8 skip_reason = 0; // 0=no skip, 1=small payload, 2=too many redirects, 3=probability
+    if (payload_len < 64) {
+        skip_reason = 1;
+    } else if (skb_mark_get_redirect_count(skb) > 8) {
+        skip_reason = 2;
+    } else if ((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_FRAGMENTATION) {
+        skip_reason = 3;
+    }
+    
+    if (skip_reason > 0) {
+        if(skip_reason == 1) {
+            bpf_printk("[FRAGMENT] Skip: payload troppo piccolo (%u bytes < 64)", payload_len);
+        } else if(skip_reason == 2) {
+            bpf_printk("[FRAGMENT] Skip: troppi redirect (%u > 8)", skb_mark_get_redirect_count(skb));
+        } else if(skip_reason == 3) {
+            bpf_printk("[FRAGMENT] Skip: controllo probabilità (payload=%u bytes)", payload_len);
+        }
+        return 1; // No fragmentation for small payloads
+    }
+    #endif
+    // fino a qui
     // Calculate new fragment size (minimum 32 bytes)
     u16 frag_payload_len = (bpf_get_prandom_u32() % (payload_len - 32)) + 32; // size of the fragment payload
     payload_len -= frag_payload_len;
+    
+    debug_print("[FRAGMENT] Fragmenting packet: segment1=%u bytes, segment2=%u bytes", frag_payload_len, payload_len);
     
     // Increment redirect count and store fragment info in mark
     skb_mark_increment_redirect_count(skb);
@@ -83,8 +103,8 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     }
 
     skb_mark_set_frag_payload_len(skb, 0);  // Clear frag payload, keep other fields
-    
-    debug_print("[FRAGMENT] Clone successful, resizing original");
+
+    debug_print("[FRAGMENT] Packet resized to %u bytes", tcp_payload_offset + payload_len);
 
     __u16 read_start_offset = tcp_payload_offset + frag_payload_len;
     new_ip_len = old_ip_len - frag_payload_len;
@@ -131,5 +151,6 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
 
     return replace_seq_num(skb, ip_header_len, new_seq);
 }
+
 
 #endif // __FRAGMENTATION_H

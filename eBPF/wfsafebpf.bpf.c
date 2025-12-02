@@ -52,74 +52,69 @@ struct {
 
 SEC("classifier")
 int fragmentation_clone_to_packet(struct __sk_buff *skb) {
-    //bpf_printk("[EGRESS] TAIL_CALL_FRAG_CLONE: packet_len=%u", skb->len);
     __u8 result = fragmentation_clone_to_packet_internal(skb);
-    if (result != 1)
+    if (result != 1) {
+        debug_print("[EGRESS-EXIT] FRAG_CLONE: result=%d", result);
         return result;
-    
-    // Continue with fragmentation if result is 0
-    debug_print("[FRAG_CLONE] Tail call to fragment_packet");
-    //bpf_printk("[EGRESS] TAIL_CALL_FRAG_CLONE done: packet_len=%u, calling TCP_STATE_INIT", skb->len);
+    }
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_TCP_STATE_INIT);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int tcp_state_init(struct __sk_buff *skb){
-    //bpf_printk("[EGRESS] TAIL_CALL_TCP_STATE_INIT: packet_len=%u", skb->len);
     __u8 result = seq_num_translation_init_egress(skb);
-    if(result != 1)
+    if(result != 1) {
+        debug_print("[EGRESS-EXIT] TCP_STATE_INIT: result=%d", result);
         return result;
-    //bpf_printk("[EGRESS] TAIL_CALL_TCP_STATE_INIT done: packet_len=%u, calling FRAGMENT_PACKET", skb->len);
+    }
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_FRAGMENT_PACKET);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int fragment_packet(struct __sk_buff *skb) {
-    //bpf_printk("[EGRESS] TAIL_CALL_FRAGMENT_PACKET: packet_len=%u", skb->len);
     __u8 result = fragment_packet_internal(skb);
-    if (result != 1)
+    if (result != 1) {
+        debug_print("[EGRESS-EXIT] FRAGMENT_PACKET: result=%d", result);
         return result;
-    //bpf_printk("[EGRESS] TAIL_CALL_FRAGMENT_PACKET done: packet_len=%u, calling ADD_PADDING", skb->len);
+    }
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_ADD_PADDING);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int add_padding(struct __sk_buff *skb) {
-    //bpf_printk("[EGRESS] TAIL_CALL_ADD_PADDING: packet_len=%u", skb->len);
     __u8 result = add_padding_internal(skb);
-    if (result != 1)
+    if (result != 1) {
+        debug_print("[EGRESS-EXIT] ADD_PADDING: result=%d", result);
         return result;
-    //bpf_printk("[EGRESS] TAIL_CALL_ADD_PADDING done: packet_len=%u, calling MANAGE_TCP_STATE", skb->len);
+    }
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int manage_tcp_state_translations(struct __sk_buff *skb){
-    //bpf_printk("[EGRESS] TAIL_CALL_MANAGE_TCP_STATE: packet_len=%u", skb->len);
     __u8 result = manage_seq_num_egress(skb);
-    if(result != 1)
+    if(result != 1) {
+        debug_print("[EGRESS-EXIT] MANAGE_TCP_STATE: result=%d", result);
         return result;
+    }
     
     // Check if checksum recalculation is needed
     if (skb_mark_get_checksum_flag(skb)) {
-        //bpf_printk("[EGRESS] TAIL_CALL_MANAGE_TCP_STATE done: packet_len=%u, calling RECOMPUTE_CHECKSUM", skb->len);
         bpf_tail_call(skb, &progs_eg, TAIL_CALL_RECOMPUTE_CHECKSUM);
     }
 
-    //bpf_printk("[EGRESS] end: packet_len=%u", skb->len);
+    debug_print("[EGRESS] END: len=%u", skb->len);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int recompute_tcp_checksum(struct __sk_buff *skb) {
-    //bpf_printk("[EGRESS] TAIL_CALL_RECOMPUTE_CHECKSUM: packet_len=%u", skb->len);
     __u8 result = recompute_tcp_checksum_internal(skb);
-    //bpf_printk("[EGRESS] end: packet_len=%u", skb->len);
-    //bpf_printk("[EGRESS] TAIL_CALL_RECOMPUTE_CHECKSUM done: packet_len=%u", skb->len);
+    debug_print("[EGRESS] END: len=%u", skb->len);
     return result;
 }
 
@@ -132,67 +127,58 @@ int handle_ingress(struct __sk_buff *skb) {
     __wsum acc = 0;
     __u32 seq_num_old;
     
-    //bpf_printk("[INGRESS] START: packet_len=%u", skb->len);
-    
-    debug_print("[INGRESS] Packet received: len=%d", skb->len);
+    debug_print("[INGRESS] START: len=%u", skb->len);
     
     if (should_skip_packet(skb)) {
-        debug_print("[INGRESS] Packet skipped (GSO or oversized)");
-        //bpf_printk("[INGRESS] SKIPPED: packet_len=%u (GSO or oversized)", skb->len);
         return TC_ACT_OK;
     }
     
     __u8 result = seq_num_translation_init_ingress(skb);
-    if (result != 1)
+    if (result != 1) {
+        debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
         return result;
+    }
     skb_mark_reset(skb);  // Reset all mark fields
 
     result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
     if(result != 1) {
-        debug_print("[INGRESS] Non-TCP/IP packet or extraction error, skipping HMAC removal");
+        debug_print("[INGRESS-EXIT] extract_tcp_ip_header_lengths: result=%d", result);
         return result;
     }
 
     result = extract_seq_num(skb, ip_header_len, &seq_num_old);
-    if (result != 1)
+    if (result != 1) {
+        debug_print("[INGRESS-EXIT] extract_seq_num: result=%d", result);
         return result;
-    
-    debug_print("[INGRESS] IP packet: total_len=%d, header_len=%d", ip_tot_old, ip_header_len);
+    }
 
     if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, &acc) < 0) {
-        debug_print("[INGRESS] Error removing padding, dropping packet");
+        debug_print("[INGRESS-EXIT] remove_all_padding: TC_ACT_SHOT");
         return TC_ACT_SHOT;
     }
-    debug_print("[INGRESS] Packet processing successful");
     result = manage_seq_num_ingress(skb);
-    if (result != 1)
+    if (result != 1) {
+        debug_print("[INGRESS-EXIT] manage_seq_num_ingress: result=%d", result);
         return result;
+    }
 
     if (update_checksums_inc(skb, ip_header_len, ip_tot_old, acc) < 0) {
-        debug_print("[INGRESS] Error updating checksums, dropping packet");
+        debug_print("[INGRESS-EXIT] update_checksums_inc: error");
         return -1;
     }
 
-    //bpf_printk("[INGRESS] END: packet_len=%u", skb->len);
+    debug_print("[INGRESS] END: len=%u", skb->len);
     return TC_ACT_OK;
 }
 
 
 SEC("classifier")
 int handle_egress(struct __sk_buff *skb) {
-    //if(skb_mark_get_frag_payload_len(skb) == 0) {
-        //bpf_printk("[EGRESS] START: packet_len=%u", skb->len);
-    //}
-    
-    debug_print("[EGRESS] Packet received: len=%d", skb->len);
+    debug_print("[EGRESS] START: len=%u", skb->len);
     
     if (should_skip_packet(skb)) {
-        debug_print("[EGRESS] Packet skipped (GSO or oversized)");
-        //bpf_printk("[EGRESS] SKIPPED: packet_len=%u (GSO or oversized)", skb->len);
         return TC_ACT_OK;
     }
-
-    //bpf_printk("[EGRESS] Calling TAIL_CALL_FRAG_CLONE");
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_FRAG_CLONE);
 
     return TC_ACT_OK;

@@ -80,7 +80,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
     __u16 tcp_payload_len = skb->len - tcp_payload_offset; 
     __u32 bytes_remaining = tcp_payload_len;
     __u16 ip_total_len_new = skb->len - ETH_HLEN;
-    debug_print("[RECOMPUTE_CSUM] IP total length: old=%u, new=%u", ip_total_len_old, ip_total_len_new);
     __sum16 old_tcp_check;
     if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check), &old_tcp_check, sizeof(old_tcp_check)) < 0)
         return TC_ACT_SHOT;
@@ -89,15 +88,12 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
 
 
    __u8 chunk;
-    debug_print("[RECOMPUTE_CSUM] Starting payload checksum calculation, bytes_remaining=%u", bytes_remaining);
     for (chunk = 0; chunk < (MAX_PKT_SIZE / FRAG_BUFF_MAX_SIZE) + 1; chunk++) {
   
         if(bytes_remaining < FRAG_BUFF_MAX_SIZE) {
-            debug_print("[RECOMPUTE_CSUM] Chunk %u: bytes_remaining < FRAG_BUFF_MAX_SIZE, breaking", chunk);
             break;
         }
         
-        debug_print("[RECOMPUTE_CSUM] Processing chunk %u, bytes_remaining=%u", chunk, bytes_remaining);
         if (bpf_skb_load_bytes(skb, tcp_payload_offset + (chunk * FRAG_BUFF_MAX_SIZE), buffer, FRAG_BUFF_MAX_SIZE) < 0) {
             debug_print("[RECOMPUTE_CSUM] ERROR: Failed to load bytes for chunk %u", chunk);
             return TC_ACT_SHOT;
@@ -113,7 +109,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
 
     }
     if(bytes_remaining > 0) {
-        debug_print("[RECOMPUTE_CSUM] Processing remaining bytes: %u", bytes_remaining);
         __builtin_memset(buffer, 0, FRAG_BUFF_MAX_SIZE);
         /* Help the verifier understand the bounds */
         bytes_remaining &= 0xFF;
@@ -141,7 +136,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
 
     __u8 tcp_header_off = sizeof(struct ethhdr) + ip_header_len;
 
-    debug_print("[RECOMPUTE_CSUM] Zeroing out checksum field");
     /* zero out checksum field */
     __u16 zero = 0;
     if(bpf_skb_store_bytes(skb, tcp_header_off + offsetof(struct tcphdr, check), &zero, sizeof(zero), 0) < 0) {
@@ -157,7 +151,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
         return TC_ACT_SHOT;
     }
     
-    debug_print("[RECOMPUTE_CSUM] TCP header length validated: %u", tcp_header_len);
     /* Store validated tcp_header_len in a register-backed variable */
     __u8 validated_tcp_len = tcp_header_len;
     
@@ -185,7 +178,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
         return TC_ACT_SHOT;
     }
     
-    debug_print("[RECOMPUTE_CSUM] Adding pseudo-header contribution");
     /* add pseudo-header contribution to checksum */
     if (bpf_skb_load_bytes(skb,
             sizeof(struct ethhdr) + offsetof(struct iphdr, saddr),
@@ -199,7 +191,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
     /* Pseudo-header needs TOTAL TCP length (header + payload) */
     __u16 tcp_total_len = tcp_header_len + tcp_payload_len;
     __be16 tcp_total_len_be = bpf_htons(tcp_total_len);
-    debug_print("[RECOMPUTE_CSUM] TCP total length for pseudo-header: %u", tcp_total_len);
     __builtin_memcpy(&buffer[10], &tcp_total_len_be, 2);    
     payload_csum = bpf_csum_diff(NULL, 0, (__be32 *)buffer, 12, 0);
     if (payload_csum < 0) {
@@ -212,10 +203,6 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
         return TC_ACT_SHOT;
     }
     
-    __sum16 new_tcp_check;
-    if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check), &new_tcp_check, sizeof(new_tcp_check)) < 0)
-        return TC_ACT_SHOT;
-    debug_print("[RECOMPUTE_CSUM] TCP checksum recomputed: old=0x%04x, new=0x%04x", bpf_ntohs(old_tcp_check), bpf_ntohs(new_tcp_check));
     return TC_ACT_OK;
 }
 

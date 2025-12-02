@@ -91,8 +91,6 @@ static __always_inline __u8 init_translation_map(void* map, struct flow_info *fl
         return TC_ACT_SHOT;
     }
 
-    debug_print("[SEQ_TRANS] Initialized flow with seq=%u", seq_num);
-    //bpf_printk("Initialized flow with seq=%u", seq_num);
     return 1;
 }
 
@@ -113,52 +111,50 @@ static __always_inline __u8 seq_num_map_translation_init(struct __sk_buff *skb, 
     __u32 seq_num;
     struct flow_info flow;
     if(result!=1){
+        debug_print("[TCP_STATE_INIT-DROP] extract_ip_header_len failed: result=%d", result);
         return result;
     }
     result = extract_tcp_flags(skb, ip_header_len, &flag);
-    if(result!=1){
+    if (result != 1) {
+        debug_print("[TCP_STATE_INIT-EXIT] extract_tcp_flags failed: result=%d, ip_hdr_len=%u", result, ip_header_len);
         return result;
     }
     result = extract_flow_info(skb, ip_header_len, &flow);
-    if(result!=1){
+    if (result != 1) {
+        debug_print("[TCP_STATE_INIT-EXIT] extract_flow_info failed: result=%d, ip_hdr_len=%u", result, ip_header_len);
         return result;
     }
     result = extract_seq_num(skb, ip_header_len, &seq_num);
-    if(result!=1){
+    if (result != 1) {
+        debug_print("[TCP_STATE_INIT-EXIT] extract_seq_num failed: result=%d, ip_hdr_len=%u", result, ip_header_len);
         return result;
     }
-    //bpf_printk("flag=%u, mark=%u", flag, skb->mark);
     if(is_syn(flag)){
-        if(has_ack_flag(flag)){
-            //bpf_printk("SYN/ACK");
-        } else {
-            //bpf_printk("SYN");
-        }
         seq_num += 1;
-        //bpf_printk("Initializing seq_num maps");
         result = init_translation_map(seq_num_map, &flow, seq_num);
-        if (result !=1 )
+        if(result != 1) {
+            debug_print("[TCP_STATE_INIT-EXIT] init_translation_map (seq_num) failed: result=%d, seq=%u, flags=%u", result, seq_num, flag);
             return result;
+        }
         reverse_flow(&flow);
-        //bpf_printk("Initializing ack_num maps");
         result = init_translation_map(ack_map, &flow, seq_num);
-        if (result !=1 )
+        if(result != 1) {
+            debug_print("[TCP_STATE_INIT-EXIT] init_translation_map (ack) failed: result=%d, seq=%u, flags=%u", result, seq_num, flag);
             return result;
+        }
         return TC_ACT_OK;
     }
     if(lookup_translation_map(seq_num_map, &flow, seq_num)!=NULL){
-        //bpf_printk("Translation already initialized");
         return 1;
     }
-    //bpf_printk("Translation not initialized, missing seq_num=%u", seq_num);
     
     // Use redirect_count field to track retries and avoid infinite loops
     __u8 retry_count = skb_mark_get_redirect_count(skb);
     if(retry_count > 8){
-        //bpf_printk("dropping packet to avoid infinite loop (retry_count=%u)", retry_count);
+        debug_print("[TCP_STATE_INIT-EXIT] Too many redirects: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
         return TC_ACT_SHOT;
     }
-    //bpf_printk("Redirecting packet to initialize translation (retry_count=%u)", retry_count);
+    debug_print("[TCP_STATE_INIT-EXIT] Missing translation, redirecting: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
     skb_mark_increment_redirect_count(skb);
     bpf_clone_redirect(skb, skb->ifindex, redirect_flags);
     return TC_ACT_SHOT;

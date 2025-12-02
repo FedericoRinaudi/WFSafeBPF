@@ -32,15 +32,15 @@ static __always_inline void reverse_flow(struct flow_info *flow) {
 
 /* Helper function to check if packet should be skipped */
 static __always_inline __u8 should_skip_packet(struct __sk_buff *skb) {
-    if (skb->gso_segs > 1) {
-        return 1;
-    }
-    
-    if (skb->len > MAX_PKT_SIZE) {
-        return 1;
-    }
-    
+    // GSO check: if gso_size > 0, packet needs segmentation
     if (skb->gso_size > 0) {
+        debug_print("[SKIP] GSO packet: len=%u, gso_segs=%u, gso_size=%u", skb->len, skb->gso_segs, skb->gso_size);
+        return 1;
+    }
+    
+    // Oversized packet check (may be GRO aggregated)
+    if (skb->len > MAX_PKT_SIZE) {
+        debug_print("[SKIP] Oversized: len=%u > %u", skb->len, MAX_PKT_SIZE);
         return 1;
     }
     
@@ -69,7 +69,6 @@ static __always_inline __u8 extract_tcp_ip_header_lengths_simple(struct __sk_buf
     if(bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + *ip_header_len + 12, tcp_header_len, 1) < 0)
         return TC_ACT_SHOT;
     *tcp_header_len = (*tcp_header_len >> 4) * 4;
-    debug_print("[EXTRACT] TCP header length: %d bytes", *tcp_header_len);
     return 1;
 }
 
@@ -81,7 +80,6 @@ static __always_inline __u8 extract_tcp_ip_header_lengths(struct __sk_buff *skb,
     if(bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, tot_len), ip_tot_len, sizeof(__u16)) < 0)
         return TC_ACT_SHOT;
     *ip_tot_len = bpf_ntohs(*ip_tot_len);
-    debug_print("[EXTRACT] IP total length: %d bytes", *ip_tot_len);
     return 1;
 }
 
@@ -177,7 +175,6 @@ static __always_inline int replace_seq_num(struct __sk_buff *skb, __u8 ip_hdr_le
     if (bpf_skb_store_bytes(skb, seq_offset, &new_seq_net, sizeof(new_seq_net), 0) < 0)
         return TC_ACT_SHOT;
     
-    debug_print("[SEQ_TRANS] Replaced seq in packet: %u", new_seq);
     return 1;
 }
 
@@ -193,7 +190,6 @@ static __always_inline int replace_ack_num(struct __sk_buff *skb, __u8 ip_hdr_le
     if (bpf_skb_store_bytes(skb, ack_offset, &new_ack_net, sizeof(new_ack_net), 0) < 0)
         return -1;
     
-    debug_print("[SEQ_TRANS] Replaced ack in packet: %u", new_ack);
     return 0;
 }
 

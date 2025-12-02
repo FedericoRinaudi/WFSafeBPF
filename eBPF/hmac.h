@@ -13,8 +13,6 @@ static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_off
     __u32 new_len;
     __u32 digest[8];
     __u8 message[32];
-    
-    debug_print("[ADD_HMAC] Processing packet: len=%d, tcp_payload_offset=%d", skb->len, tcp_payload_offset);
 
     if (bpf_skb_load_bytes(skb, skb->len - HASH_LEN, message, HASH_LEN) < 0) {
         debug_print("[ADD_HMAC] Failed to load message bytes for HMAC calculation");
@@ -22,7 +20,6 @@ static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_off
     }
     
     new_len = skb->len + HASH_LEN;
-    debug_print("[ADD_HMAC] Expanding packet from %d to %d bytes", skb->len, new_len);
     
     if (bpf_skb_change_tail(skb, new_len, 0) < 0) {
         debug_print("[ADD_HMAC] Failed to expand packet tail");
@@ -42,10 +39,6 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
     __u8 message[32];
     __u8 received_tag[32];
     __u32 calculated_digest[8];
-    
-    debug_print("[REMOVE_HMAC] Processing packet: len=%d, tcp_payload_offset=%d", skb->len, tcp_payload_offset);
-
-    debug_print("[REMOVE_HMAC] HMAC message starts at position %d", message_start_pos);
     
     if (bpf_skb_load_bytes(skb, message_start_pos, message, 32) < 0) {
         debug_print("[REMOVE_HMAC] Failed to load HMAC message bytes");
@@ -69,7 +62,6 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
         return -1;
     *acc = (__wsum)t;
     
-    debug_print("[REMOVE_HMAC] HMAC verified successfully, need to remove tag");
     return 1;
 }
 
