@@ -5,6 +5,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "config.h"
+#include "consts.h"
 #include "network_utils.h"
 #include "checksum.h"
 #include "skb_mark.h"
@@ -12,9 +13,9 @@
 /* Clone fragment to packet - moves fragment data to the beginning of the packet */
 static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_buff *skb) {
     /* Extract fragment info from skb->mark */
-    __u16 payload_len = skb_mark_get_frag_payload_len(skb);
+    __u16 payload_len = skb_mark_get_len(skb);
     if(payload_len == 0) {
-        return 1; // Nothing to do
+        return TC_ACT_SHOT; // Nothing to do
     }
 
     __u16 old_ip_len, new_ip_len;
@@ -37,9 +38,23 @@ static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_b
     if(update_ip_len_and_csum(skb, ip_header_len, old_ip_len, new_ip_len) < 0) {
         debug_print("[FRAG_CLONE] ERROR: Failed to update IP len and csum");
         return TC_ACT_SHOT;
-    }    
-    /* Clear frag_payload_len and set checksum_flag (packet modified) */
-    skb_mark_set_frag_payload_len(skb, 0);
+    }
+
+    __u8 flags;
+    if (extract_tcp_flags(skb, ip_header_len, &flags) != 1) {
+        debug_print("[FRAG_CLONE] ERROR: Failed to extract TCP flags");
+        return TC_ACT_SHOT;
+    }
+    reset_syn(&flags);
+    reset_fin(&flags);
+    reset_rst(&flags);
+    if (replace_tcp_flags(skb, ip_header_len, flags) != 1) {
+        debug_print("[FRAG_CLONE] ERROR: Failed to replace TCP flags");
+        return TC_ACT_SHOT;
+    }
+
+    /* Clear len and set checksum_flag (packet modified) */
+    skb_mark_set_len(skb, 0);
     skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
         
     return 1; // Signal to continue with fragmentation
@@ -60,9 +75,8 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     __u16 payload_len = skb->len - tcp_payload_offset;
     
     // Check if we should fragment
-    #ifndef DEBUG
+    #if DEBUG == 0
     if ((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_FRAGMENTATION || payload_len < 64 || skb_mark_get_redirect_count(skb) > 8 ) {
-        bpf_printk("[FRAGMENT] Skipping fragmentation: probability check or small payload (%u bytes, count=%u)", payload_len, skb_mark_get_redirect_count(skb));
         return 1; // No fragmentation for small payloads
     }
     #else
@@ -95,15 +109,16 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     
     // Increment redirect count and store fragment info in mark
     skb_mark_increment_redirect_count(skb);
-    skb_mark_set_frag_payload_len(skb, frag_payload_len);
+    skb_mark_set_len(skb, frag_payload_len);
+    skb_mark_set_type(skb, SKB_MARK_TYPE_FRAGMENT_CLONE);
     
     if (bpf_clone_redirect(skb, skb->ifindex, 0) < 0) {
         debug_print("[FRAGMENT] ERROR: Failed to clone packet at iteration");
         return TC_ACT_SHOT;
     }
 
-    skb_mark_set_frag_payload_len(skb, 0);  // Clear frag payload, keep other fields
-
+    skb_mark_set_len(skb, 0);  // Clear frag payload, keep other fields
+    skb_mark_set_type(skb, SKB_MARK_TYPE_NONE);
     debug_print("[FRAGMENT] Packet resized to %u bytes", tcp_payload_offset + payload_len);
 
     __u16 read_start_offset = tcp_payload_offset + frag_payload_len;

@@ -5,6 +5,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "config.h"
+#include "consts.h"
 
 
 /* TCP flags */
@@ -96,7 +97,7 @@ static __always_inline __u8 extract_tcp_flags(struct __sk_buff *skb, __u8 ip_hdr
     __u8 flags;
     __u32 tcp_offset = sizeof(struct ethhdr) + ip_hdr_len;
     if (bpf_skb_load_bytes(skb, tcp_offset + 13, &flags, sizeof(__u8)) < 0)
-        return TC_ACT_SHOT;
+        return -1;
     
     *tcp_flags = flags;
 
@@ -131,6 +132,28 @@ static __always_inline int is_rst(__u8 flags) {
  */
 static __always_inline int has_ack_flag(__u8 flags) {
     return (flags & TCP_FLAG_ACK);
+}
+
+static __always_inline __u8 replace_tcp_flags(struct __sk_buff *skb, __u8 ip_hdr_len, __u8 new_flags) {
+    __u32 tcp_offset = sizeof(struct ethhdr) + ip_hdr_len;
+    
+    __u32 flags_offset = tcp_offset + 13; // Offset of flags byte in TCP header
+    if (bpf_skb_store_bytes(skb, flags_offset, &new_flags, sizeof(new_flags), 0) < 0)
+        return -1;
+    
+    return 1;
+}
+
+static __always_inline void reset_syn(__u8 *flags) {
+    *flags &= ~TCP_FLAG_SYN;
+}
+
+static __always_inline void reset_fin(__u8 *flags) {
+    *flags &= ~TCP_FLAG_FIN;
+}
+
+static __always_inline void reset_rst(__u8 *flags) {
+    *flags &= ~TCP_FLAG_RST;
 }
 
 /* ============================================================================
@@ -190,8 +213,10 @@ static __always_inline int replace_ack_num(struct __sk_buff *skb, __u8 ip_hdr_le
     if (bpf_skb_store_bytes(skb, ack_offset, &new_ack_net, sizeof(new_ack_net), 0) < 0)
         return -1;
     
-    return 0;
+    return 1;
 }
+
+
 
 /* ============================================================================
  * Flow Key Extraction

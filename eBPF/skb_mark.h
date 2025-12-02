@@ -6,7 +6,7 @@
 /*
  * skb->mark encoding (32 bits total):
  *
- * [31-16] frag_payload_len (16 bits)
+ * [31-16] len (16 bits)
  * [15-12] checksum_flag (4 bits)
  * [11-8]  redirect_count (4 bits)
  * [7-0]   type (8 bits)
@@ -36,7 +36,7 @@
 SKB_MARK_DEFINE_FIELD(type,            __u8,  8,  0);
 SKB_MARK_DEFINE_FIELD(redirect_count,  __u8,  4,  8);
 SKB_MARK_DEFINE_FIELD(checksum_flag,   __u8,  4, 12);
-SKB_MARK_DEFINE_FIELD(frag_payload_len,__u16,16, 16);
+SKB_MARK_DEFINE_FIELD(len,__u16,16, 16);
 
 /* helper extra non generabili in automatico (increment, reset, build) */
 
@@ -56,7 +56,7 @@ static __always_inline __u32 skb_mark_build(__u16 frag_payload,
                                             __u8 checksum_flag,
                                             __u8 redirect_count)
 {
-    return (((__u32)frag_payload   << SKB_MARK_frag_payload_len_SHIFT) & SKB_MARK_frag_payload_len_MASK) |
+    return (((__u32)frag_payload   << SKB_MARK_len_SHIFT) & SKB_MARK_len_MASK) |
            (((__u32)checksum_flag  << SKB_MARK_checksum_flag_SHIFT)    & SKB_MARK_checksum_flag_MASK)   |
            (((__u32)redirect_count << SKB_MARK_redirect_count_SHIFT)   & SKB_MARK_redirect_count_MASK)  |
            (((__u32)type           << SKB_MARK_type_SHIFT)             & SKB_MARK_type_MASK);

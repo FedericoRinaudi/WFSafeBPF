@@ -5,24 +5,17 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "config.h"
+#include "consts.h"
 #include "blake2s.h"
 #include "checksum.h"
 
 /* Add keyed BLAKE2s authentication tag to packet */
-static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 *secret_key) {
-    __u32 new_len;
+static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 *secret_key) {
     __u32 digest[8];
     __u8 message[32];
 
-    if (bpf_skb_load_bytes(skb, skb->len - HASH_LEN, message, HASH_LEN) < 0) {
+    if (bpf_skb_load_bytes(skb, skb->len - HASH_LEN*2, message, HASH_LEN) < 0) {
         debug_print("[ADD_HMAC] Failed to load message bytes for HMAC calculation");
-        return -1;
-    }
-    
-    new_len = skb->len + HASH_LEN;
-    
-    if (bpf_skb_change_tail(skb, new_len, 0) < 0) {
-        debug_print("[ADD_HMAC] Failed to expand packet tail");
         return -1;
     }
 
@@ -35,7 +28,7 @@ static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 tcp_payload_off
 }
 
 /* Remove and verify keyed BLAKE2s authentication tag */
-static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_offset, __u32 message_start_pos, __wsum *acc, __u8 *secret_key) {
+static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u32 message_start_pos, __wsum *acc, __u8 *secret_key) {
     __u8 message[32];
     __u8 received_tag[32];
     __u32 calculated_digest[8];
@@ -53,7 +46,7 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u8 tcp_payload_
     blake2sCompute(secret_key, message, calculated_digest);
     
     if (memcmp(calculated_digest, received_tag, HASH_LEN) != 0) {
-        debug_print("[REMOVE_HMAC] HMAC verification failed - invalid tag");
+        //debug_print("[REMOVE_HMAC] HMAC verification failed - invalid tag");
         return 0;
     }
 

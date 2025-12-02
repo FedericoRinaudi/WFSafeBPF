@@ -5,6 +5,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "config.h"
+#include "consts.h"
 #include "network_utils.h"
 
 static __always_inline __s8 update_ip_len_and_csum(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __u16 new_ip_len) {

@@ -168,25 +168,24 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
         return TC_ACT_SHOT;
     }
 
-    //bpf_printk("Found seq num translation: original=%u, translated=%u", input_seq_num, translation->translated_seq);
+    __u8 mark = skb_mark_get_type(skb);
+
+    if(mark == SKB_MARK_TYPE_CLONED_FOR_DUMMY){
+        translation->translated_seq += skb_mark_get_len(skb);
+    }
 
     *output_seq_num = translation->translated_seq;
 
     int result = replace_seq_num(skb, ip_header_len, *output_seq_num);
     if (result != 1) {
         debug_print("[SEQ_TRANS] Failed to replace seq_num");
-        //bpf_printk("[SEQ_TRANS] Failed to replace seq_num");
         return result;
     }
 
-    //bpf_printk("Replaced seq num in packet: %u", *output_seq_num);
-
     if (update_checksums_seq_num(skb, ip_header_len, translation->prev_seq, *output_seq_num) < 0) {
         debug_print("[SEQ_TRANS] Failed to update checksums for seq_num");
-        //bpf_printk("[SEQ_TRANS] Failed to update checksums for seq_num");
         return TC_ACT_SHOT;
     }
-    //bpf_printk("Updated checksums for seq num change: old=%u, new=%u", translation->prev_seq, *output_seq_num);
 
     return 1;
 }
@@ -201,7 +200,6 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
     value.prev_seq = input_seq_num;
     value.timestamp_ns = bpf_ktime_get_ns();
 
-    //bpf_printk("Inserting new seq mapping: original=%u (%u + %u), translated=%u (%u + %u)", key.seq, input_seq_num, input_payload_len, value.translated_seq, translated_seq, translated_payload_len);
     if (bpf_map_update_elem(seq_num_map, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to insert new seq_num");
         return TC_ACT_SHOT;
@@ -214,7 +212,6 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
     value.prev_seq = translated_seq;
     value.timestamp_ns = bpf_ktime_get_ns();
 
-    //bpf_printk("Inserting new ack mapping: original=%u (%u + %u), translated=%u (%u + %u)", key.seq, input_seq_num, input_payload_len, value.translated_seq, translated_seq, translated_payload_len);
     if (bpf_map_update_elem(ack_map_reverse, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to insert new ack_num");
         return TC_ACT_SHOT;
@@ -224,21 +221,18 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
 }
 
 static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, void* cleanup_queue, __u32 input_ack_num, struct flow_info flow, __u8 ip_header_len) {
-
-    // Lookup translation
     struct map_value *translation = lookup_translation_map(ack_map, &flow, input_ack_num);
     if (!translation) {
         debug_print("[SEQ_TRANS] No translation found for ack_num=%u", input_ack_num);
-        //bpf_printk("[SEQ_TRANS] No translation found for ack_num=%u", input_ack_num);
         return TC_ACT_SHOT;
     }
-    //bpf_printk("Found ack translation: original=%u, translated=%u", input_ack_num, translation->translated_seq);
+    
    // Replace ack_num in packet
     if (replace_ack_num(skb, ip_header_len, translation->translated_seq) < 0) {
         debug_print("[SEQ_TRANS] Failed to replace ack_num");
         return TC_ACT_SHOT;
     }
-
+    
     // Offload cleanup to user-space
     offload_cleanup_to_user_space(cleanup_queue, &flow, input_ack_num);
 
@@ -265,9 +259,8 @@ static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_
     result = extract_tcp_flags(skb, ip_header_len, &tcp_flags);
     if(result != 1)
         return result;
-    //bpf_printk("IP header length: %u, TCP header length: %u, IP total length: %u", ip_header_len, tcp_header_len, input_ip_len);
+    
     input_payload_len = input_ip_len - (ip_header_len + tcp_header_len);
-    //bpf_printk("Input payload length: %u bytes (%u - (%u + %u))", input_payload_len, input_ip_len, ip_header_len, tcp_header_len);
     translated_payload_len = skb->len - (ip_header_len + tcp_header_len + sizeof(struct ethhdr));
 
     // Translate seq_num
@@ -279,17 +272,27 @@ static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_
         translated_payload_len +=1;
         input_payload_len +=1;
     }
-    // Insert new seq_num mapping for next expected seq_num
-    result = insert_new_seq(seq_num_map, ack_map_reverse, &flow, input_seq_num, translated_seq_num, input_payload_len, translated_payload_len);
-    if (result != 1) {
-        return result;
+
+    __u8 mark = skb_mark_get_type(skb);
+
+    if(mark == SKB_MARK_TYPE_DUMMY){
+        translated_payload_len = 0;
+    }
+
+    if(mark!= SKB_MARK_TYPE_DUMMY_CLONE){
+        result = insert_new_seq(seq_num_map, ack_map_reverse, &flow, input_seq_num, translated_seq_num, input_payload_len, translated_payload_len);
+        if (result != 1) {
+            return result;
+        }
+    }
+    
+    if(mark == SKB_MARK_TYPE_DUMMY){
+        return 1;
     }
 
     if (has_ack_flag(tcp_flags) == 0) {
-        //bpf_printk("No ACK flag set");
         return 1; // No ACK flag, nothing more to do
     }
-    //bpf_printk("ACK flag set");
     __u32 input_ack_num;
     result = extract_ack_num(skb, ip_header_len, &input_ack_num);
     if (result != 1) {

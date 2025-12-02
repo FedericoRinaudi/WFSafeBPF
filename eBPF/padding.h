@@ -5,6 +5,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 #include "config.h"
+#include "consts.h"
 #include "network_utils.h"
 #include "checksum.h"
 #include "hmac.h"
@@ -14,14 +15,14 @@
 static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, __wsum *acc) {
     __u8 i;
     __s8 remove_result;
-    __u8 secret_key[32] = SECRET_KEY_INIT;
+    __u8 secret_key[32] = SECRET_KEY_PADDING;
 
     for (i = 0; i < 10; i++) {
         __s32 message_start_pos = skb->len - (32 * (i + 2));
         if (message_start_pos < tcp_payload_offset) {
             break;
         }
-        remove_result = remove_hmac(skb, tcp_payload_offset, message_start_pos, acc, secret_key);
+        remove_result = remove_hmac(skb, message_start_pos, acc, secret_key);
         
         if (remove_result < 0) {
             debug_print("[INGRESS] Error in remove_hmac, dropping packet");
@@ -55,7 +56,7 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
     __s8 hmac_result;
     __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
     __u8 random_val = bpf_get_prandom_u32() % 11;
-    __u8 secret_key[32] = SECRET_KEY_INIT;
+    __u8 secret_key[32] = SECRET_KEY_PADDING;
     
     __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if (extract_result != 1) {
@@ -73,7 +74,11 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
         if (skb->len + HASH_LEN > MAX_PKT_SIZE) {
             break;
         }
-        hmac_result = add_hmac(skb, tcp_payload_offset, secret_key);
+        if (bpf_skb_change_tail(skb, skb->len + HASH_LEN, 0) < 0) {
+            debug_print("[PADDING] Failed to expand packet tail");
+            return -1;
+        }
+        hmac_result = add_hmac(skb, secret_key);
         if (hmac_result < 0) {
             debug_print("[EGRESS] Error in add_hmac, dropping packet");
             return TC_ACT_SHOT;
