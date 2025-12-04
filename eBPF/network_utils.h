@@ -219,6 +219,71 @@ static __always_inline int replace_ack_num(struct __sk_buff *skb, __u8 ip_hdr_le
 
 
 /* ============================================================================
+ * IP Address Extraction Functions
+ * ============================================================================ */
+
+/**
+ * Extract source IP address from packet
+ * Returns 1 on success, negative on error
+ */
+static __always_inline __s8 extract_src_ip(struct __sk_buff *skb, __u32 *src_ip) {
+    if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, saddr), src_ip, sizeof(__u32)) < 0) {
+        debug_print("[NETWORK] Failed to extract source IP");
+        return -1;
+    }
+    *src_ip = bpf_ntohl(*src_ip);  // Convert from network to host byte order
+    return 1;
+}
+
+/**
+ * Extract destination IP address from packet
+ * Returns 1 on success, negative on error
+ */
+static __always_inline __s8 extract_dst_ip(struct __sk_buff *skb, __u32 *dst_ip) {
+    if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + offsetof(struct iphdr, daddr), dst_ip, sizeof(__u32)) < 0) {
+        debug_print("[NETWORK] Failed to extract destination IP");
+        return -1;
+    }
+    *dst_ip = bpf_ntohl(*dst_ip);  // Convert from network to host byte order
+    return 1;
+}
+
+
+
+/* ============================================================================
+ * Port Extraction Functions
+ * ============================================================================ */
+
+/**
+ * Extract source port from packet
+ * Returns 1 on success, negative on error
+ */
+static __always_inline __s8 extract_src_port(struct __sk_buff *skb, __u8 ip_hdr_len, __u16 *src_port) {
+    __u32 tcp_offset = sizeof(struct ethhdr) + ip_hdr_len;
+    if (bpf_skb_load_bytes(skb, tcp_offset + offsetof(struct tcphdr, source), src_port, sizeof(__u16)) < 0) {
+        debug_print("[NETWORK] Failed to extract source port");
+        return -1;
+    }
+    *src_port = bpf_ntohs(*src_port);  // Convert from network to host byte order
+    return 1;
+}
+
+/**
+ * Extract destination port from packet
+ * Returns 1 on success, negative on error
+ */
+static __always_inline __s8 extract_dst_port(struct __sk_buff *skb, __u8 ip_hdr_len, __u16 *dst_port) {
+    __u32 tcp_offset = sizeof(struct ethhdr) + ip_hdr_len;
+    if (bpf_skb_load_bytes(skb, tcp_offset + offsetof(struct tcphdr, dest), dst_port, sizeof(__u16)) < 0) {
+        debug_print("[NETWORK] Failed to extract destination port");
+        return -1;
+    }
+    *dst_port = bpf_ntohs(*dst_port);  // Convert from network to host byte order
+    return 1;
+}
+
+
+/* ============================================================================
  * Flow Key Extraction
  * ============================================================================ */
 
@@ -240,6 +305,38 @@ static __always_inline __u8 extract_flow_info(struct __sk_buff *skb, __u8 ip_hdr
     if (bpf_skb_load_bytes(skb, tcp_offset + offsetof(struct tcphdr, dest), &(flow->dport), sizeof(__u16)) < 0)
         return TC_ACT_SHOT;
     return 1;
+}
+
+/* ============================================================================
+ * Server Port Extraction (context-aware)
+ * ============================================================================ */
+
+/**
+ * Extract server port from ingress packet
+ * On server: destination port (where packet is arriving)
+ * On client: source port (where packet is coming from)
+ * Returns 1 on success, negative on error
+ */
+static __always_inline __s8 extract_server_port_ingress(struct __sk_buff *skb, __u8 ip_hdr_len, __u16 *server_port) {
+    #if IS_SERVER == 1
+    return extract_dst_port(skb, ip_hdr_len, server_port);
+    #else
+    return extract_src_port(skb, ip_hdr_len, server_port);
+    #endif
+}
+
+/**
+ * Extract server port from egress packet
+ * On server: source port (where packet is leaving from)
+ * On client: destination port (where packet is going to)
+ * Returns 1 on success, negative on error
+ */
+static __always_inline __s8 extract_server_port_egress(struct __sk_buff *skb, __u8 ip_hdr_len, __u16 *server_port) {
+    #if IS_SERVER == 1
+    return extract_src_port(skb, ip_hdr_len, server_port);
+    #else
+    return extract_dst_port(skb, ip_hdr_len, server_port);
+    #endif
 }
 
 #endif // __NETWORK_UTILS_H

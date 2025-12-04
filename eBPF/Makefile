@@ -29,8 +29,11 @@ wfsafebpf: wfsafebpf.bpf.o loader
 blake2s-test: blake2s_test.bpf.o blake2s_test_loader
 
 # Individual build rules
+# IS_SERVER can be overridden: make IS_SERVER=1 for server, make IS_SERVER=0 for client
+IS_SERVER ?= 0
+
 wfsafebpf.bpf.o: wfsafebpf.bpf.c config.h network_utils.h checksum.h hmac.h padding.h fragmentation.h blake2s.h vmlinux.h seq_num_translation.h skb_mark.h
-	$(BPF_CLANG) $(BPF_CFLAGS) -c $< -o $@
+	$(BPF_CLANG) $(BPF_CFLAGS) -DIS_SERVER=$(IS_SERVER) -c $< -o $@
 
 loader: loader.c
 	$(CC) $(UCFLAGS) $< -o $@ $(ULIBS)

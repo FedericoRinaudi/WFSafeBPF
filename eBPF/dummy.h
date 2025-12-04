@@ -8,15 +8,34 @@
 #include "network_utils.h"
 #include "checksum.h"
 #include "skb_mark.h"
+#include "secret_keys.h"
 
 
 static __always_inline __s8 is_dummy(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
-    __u8 secret_key[32] = SECRET_KEY_DUMMY;
     __wsum acc = 0;
     if(skb->len - tcp_payload_offset < HASH_LEN*2) {
         return 0;
     }
-    return remove_hmac(skb, skb->len - (HASH_LEN*2), &acc, secret_key);
+    
+    // Extract source IP address (ingress: packet from remote)
+    __u32 src_ip;
+    if (extract_src_ip(skb, &src_ip) < 0) {
+        return -1;
+    }
+    
+    // Extract server port (ingress context)
+    __u16 server_port;
+    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
+        return -1;
+    }
+    
+    // Get dummy key for this IP and port
+    __u8 *dummy_key = get_dummy_key(src_ip, server_port);
+    if (!dummy_key) {
+        return -1;
+    }
+    
+    return remove_hmac(skb, skb->len - (HASH_LEN*2), &acc, dummy_key);
 }
 
 static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb) {
@@ -49,9 +68,25 @@ static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb
         }
     }
 
-    __u8 secret_key[32] = SECRET_KEY_DUMMY;
+    // Extract destination IP address (egress: packet to remote)
+    __u32 dst_ip;
+    if (extract_dst_ip(skb, &dst_ip) < 0) {
+        return TC_ACT_SHOT;
+    }
     
-    __s8 hmac_result = add_hmac(skb, secret_key);
+    // Extract server port (egress context)
+    __u16 server_port;
+    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
+        return TC_ACT_SHOT;
+    }
+    
+    // Get dummy key for this IP and port
+    __u8 *dummy_key = get_dummy_key(dst_ip, server_port);
+    if (!dummy_key) {
+        return TC_ACT_SHOT;
+    }
+    
+    __s8 hmac_result = add_hmac(skb, dummy_key);
     if (hmac_result < 0) {
         debug_print("[EGRESS] Error in add_hmac, dropping packet");
         return TC_ACT_SHOT;

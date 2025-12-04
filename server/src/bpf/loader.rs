@@ -20,8 +20,31 @@ impl BpfLoader {
         // Open and load the skeleton
         let open_obj_box = Box::leak(Box::new(std::mem::MaybeUninit::<libbpf_rs::OpenObject>::uninit()));
         let mut skel = WfsafebpfSkelBuilder::default().open(open_obj_box)?.load()?;
-        // Attach the programs
-        skel.attach()?;
+        
+        // Attach ingress program manually using TC hook
+        let mut ingress_hook = TcHookBuilder::new(skel.progs.handle_ingress.as_fd())
+            .ifindex(ifindex)
+            .replace(true)
+            .handle(1)
+            .priority(1)
+            .hook(TC_INGRESS);
+        
+        ingress_hook.create()?;
+        ingress_hook.attach()?;
+        
+        // Attach egress program manually using TC hook
+        let mut egress_hook = TcHookBuilder::new(skel.progs.handle_egress.as_fd())
+            .ifindex(ifindex)
+            .replace(true)
+            .handle(1)
+            .priority(1)
+            .hook(TC_EGRESS);
+        
+        egress_hook.create()?;
+        egress_hook.attach()?;
+        
+        println!("Programmi eBPF attaccati correttamente a {}", ifname);
+        
         Ok(BpfLoader { skel, ifindex })
     }
     

@@ -9,6 +9,7 @@
 #include "network_utils.h"
 #include "checksum.h"
 #include "hmac.h"
+#include "secret_keys.h"
 #include "padding.h"
 #include "fragmentation.h"
 #include "seq_num_translation.h"
@@ -163,19 +164,41 @@ int handle_ingress(struct __sk_buff *skb) {
     if (should_skip_packet(skb)) {
         return TC_ACT_OK;
     }
+
+    __u8 result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
+    if(result != 1) {
+        debug_print("[INGRESS-EXIT] extract_tcp_ip_header_lengths: result=%d", result);
+        return result;
+    }
     
-    __u8 result = seq_num_translation_init_ingress(skb);
+    // Check if source IP has keys configured
+    __u32 src_ip;
+    __u16 server_port;
+    if (extract_src_ip(skb, &src_ip) < 0) {
+        return TC_ACT_OK;
+    }
+    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
+        return TC_ACT_OK;
+    }
+    // Debug: create key and dump raw bytes
+    struct secret_keys_key lookup_key = {};
+    lookup_key.ip_addr = src_ip;
+    lookup_key.server_port = server_port;
+    __u8 *key_bytes = (__u8 *)&lookup_key;
+    debug_print("[INGRESS] Key bytes: %02x %02x %02x %02x %02x %02x %02x %02x",
+                key_bytes[0], key_bytes[1], key_bytes[2], key_bytes[3],
+                key_bytes[4], key_bytes[5], key_bytes[6], key_bytes[7]);
+    
+    if (!has_secret_keys(src_ip, server_port)) {
+        debug_print("[INGRESS-EXIT] No keys for destination IP, passing through");
+        return TC_ACT_OK;
+    }
+    result = seq_num_translation_init_ingress(skb);
     if (result != 1) {
         debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
         return result;
     }
     skb_mark_reset(skb);  // Reset all mark fields
-
-    result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
-    if(result != 1) {
-        debug_print("[INGRESS-EXIT] extract_tcp_ip_header_lengths: result=%d", result);
-        return result;
-    }
 
     result = extract_seq_num(skb, ip_header_len, &seq_num_old);
     if (result != 1) {
@@ -223,6 +246,32 @@ int handle_egress(struct __sk_buff *skb) {
     if (should_skip_packet(skb)) {
         return TC_ACT_OK;
     }
+    
+    // Check if destination IP has keys configured
+    __u32 dst_ip;
+    if (extract_dst_ip(skb, &dst_ip) < 0) {
+        return TC_ACT_OK;
+    }
+    __u8 ip_header_len;
+    if(extract_ip_header_len(skb, &ip_header_len) != 1) {
+        return TC_ACT_OK;
+    }
+    __u16 server_port;
+    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
+        return TC_ACT_OK;
+    }
+    // Debug: create key and dump raw bytes
+    struct secret_keys_key lookup_key = {};
+    lookup_key.ip_addr = dst_ip;
+    lookup_key.server_port = server_port;
+    
+    if (!has_secret_keys(dst_ip, server_port)) {
+        debug_print("[EGRESS] No keys for source IP, passing through");
+        return TC_ACT_OK;
+    }
+
+    debug_print("[EGRESS] Keys found for destination IP, processing packet");
+    
     __u8 result = skb_mark_get_type(skb);
     
     switch(result) {

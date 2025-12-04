@@ -10,12 +10,30 @@
 #include "checksum.h"
 #include "hmac.h"
 #include "skb_mark.h"
+#include "secret_keys.h"
 
 /* Remove all padding HMACs from packet */
 static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, __wsum *acc) {
     __u8 i;
     __s8 remove_result;
-    __u8 secret_key[32] = SECRET_KEY_PADDING;
+    
+    // Extract source IP address (ingress: packet from remote)
+    __u32 src_ip;
+    if (extract_src_ip(skb, &src_ip) < 0) {
+        return -1;
+    }
+    
+    // Extract server port (ingress context)
+    __u16 server_port;
+    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
+        return -1;
+    }
+    
+    // Get padding key for this IP and port
+    __u8 *secret_key = get_padding_key(src_ip, server_port);
+    if (!secret_key) {
+        return -1;
+    }
 
     for (i = 0; i < 10; i++) {
         __s32 message_start_pos = skb->len - (32 * (i + 2));
@@ -56,14 +74,33 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
     __s8 hmac_result;
     __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
     __u8 random_val = bpf_get_prandom_u32() % 11;
-    __u8 secret_key[32] = SECRET_KEY_PADDING;
+    
+    // Extract destination IP address (egress: packet to remote)
+    __u32 dst_ip;
+    if (extract_dst_ip(skb, &dst_ip) < 0) {
+        return -1;
+    }
     
     __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if (extract_result != 1) {
         debug_print("[EGRESS] Non-TCP/IP packet or extraction error, skipping HMAC addition");
         return extract_result;
     }
+    
+    // Extract server port (egress context)
+    __u16 server_port;
+    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
+        return -1;
+    }
+    
+    // Get padding key for this IP and port
+    __u8 *secret_key = get_padding_key(dst_ip, server_port);
+    if (!secret_key) {
+        return -1;
+    }
+
     tcp_payload_offset = sizeof(struct ethhdr) + ip_header_len + tcp_header_len;
+    
     if(skb->len < tcp_payload_offset + HASH_LEN) {
         return 1;
     }

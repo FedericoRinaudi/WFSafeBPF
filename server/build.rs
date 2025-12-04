@@ -21,6 +21,7 @@ fn main() {
 
     SkeletonBuilder::new()
         .source(&in_path)
+        .clang_args(["-DIS_SERVER=1"])  // Define IS_SERVER=1 for server build
         .build_and_generate(&out)
         .unwrap();
     println!("cargo:rerun-if-changed={}", in_path.display());

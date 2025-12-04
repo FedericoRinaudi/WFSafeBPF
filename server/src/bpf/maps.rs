@@ -1,4 +1,5 @@
 use libbpf_rs::MapCore;
+use std::os::fd::{AsRawFd, AsFd};
 
 /// Wrapper per gestire le operazioni sulle mappe eBPF
 pub struct BpfMapManager<'a> {
@@ -64,5 +65,57 @@ impl<'a> BpfMapManager<'a> {
     ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
         let map = self.get_map(map_name)?;
         Ok(map.lookup(key, libbpf_rs::MapFlags::ANY)?)
+    }
+    
+    /// Ottiene la prossima chiave da una mappa
+    pub fn get_next_key(
+        &self,
+        map_name: &str,
+        current_key: Option<&[u8]>,
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        let map = self.get_map(map_name)?;
+        let key_size = map.key_size() as usize;
+        let mut next_key = vec![0u8; key_size];
+        
+        let result = unsafe {
+            libbpf_rs::libbpf_sys::bpf_map_get_next_key(
+                map.as_fd().as_raw_fd(),
+                current_key.map_or(std::ptr::null(), |k| k.as_ptr() as *const std::ffi::c_void),
+                next_key.as_mut_ptr() as *mut std::ffi::c_void,
+            )
+        };
+        
+        if result == 0 {
+            Ok(Some(next_key))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Itera tutte le entry di una mappa
+    pub fn iter_keys(
+        &self,
+        map_name: &str,
+    ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
+        let mut keys = Vec::new();
+        let mut current_key: Option<Vec<u8>> = None;
+        
+        loop {
+            let next_key = if let Some(ref key) = current_key {
+                self.get_next_key(map_name, Some(key))?
+            } else {
+                self.get_next_key(map_name, None)?
+            };
+            
+            match next_key {
+                Some(k) => {
+                    keys.push(k.clone());
+                    current_key = Some(k);
+                }
+                None => break,
+            }
+        }
+        
+        Ok(keys)
     }
 }

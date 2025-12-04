@@ -2,6 +2,7 @@
 address = "0.0.0.0"
 port = 8000
 iface = "enp0s9"
+cleanup_interval_seconds = 60
 
 [debug]
 iface = "enp0s9"
