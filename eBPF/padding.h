@@ -10,7 +10,7 @@
 #include "checksum.h"
 #include "hmac.h"
 #include "skb_mark.h"
-#include "secret_keys.h"
+#include "client_config.h"
 
 /* Remove all padding HMACs from packet */
 static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, __wsum *acc) {
@@ -29,11 +29,12 @@ static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_p
         return -1;
     }
     
-    // Get padding key for this IP and port
-    __u8 *secret_key = get_padding_key(src_ip, server_port);
-    if (!secret_key) {
+    // Get padding config for this IP and port
+    struct client_config *config = get_padding_key(src_ip, server_port);
+    if (!config) {
         return -1;
     }
+    __u8 *secret_key = config->padding_key;
 
     for (i = 0; i < MAX_PADDING_UNITS; i++) {
         __s32 message_start_pos = skb->len - (32 * (i + 2));
@@ -68,9 +69,6 @@ static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_p
 
 /* Add padding HMACs to packet */
 static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
-    if((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_PADDING){
-        return 1;
-    }
     __s8 hmac_result;
     __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
     __u8 random_val = bpf_get_prandom_u32() % (MAX_PADDING_UNITS + 1);
@@ -93,11 +91,18 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
         return -1;
     }
     
-    // Get padding key for this IP and port
-    __u8 *secret_key = get_padding_key(dst_ip, server_port);
-    if (!secret_key) {
+    // Get padding config and probability for this IP and port
+    struct client_config *config = get_padding_key(dst_ip, server_port);
+    if (!config) {
         return -1;
     }
+    
+    // Check probability
+    if((bpf_get_prandom_u32() % 100) > config->padding_probability){
+        return 1;
+    }
+    
+    __u8 *secret_key = config->padding_key;
 
     tcp_payload_offset = sizeof(struct ethhdr) + ip_header_len + tcp_header_len;
     

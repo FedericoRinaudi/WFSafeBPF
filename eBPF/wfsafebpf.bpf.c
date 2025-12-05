@@ -9,7 +9,7 @@
 #include "network_utils.h"
 #include "checksum.h"
 #include "hmac.h"
-#include "secret_keys.h"
+#include "client_config.h"
 #include "padding.h"
 #include "fragmentation.h"
 #include "seq_num_translation.h"
@@ -181,8 +181,8 @@ int handle_ingress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
     
-    if (!has_secret_keys(src_ip, server_port)) {
-        debug_print("[INGRESS-EXIT] No keys for destination IP, passing through");
+    if (!has_client_config(src_ip, server_port)) {
+        debug_print("[INGRESS-EXIT] No config for source IP, passing through");
         return TC_ACT_OK;
     }
     result = seq_num_translation_init_ingress(skb);
@@ -253,12 +253,12 @@ int handle_egress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
     // Debug: create key and dump raw bytes
-    struct secret_keys_key lookup_key = {};
+    struct client_config_key lookup_key = {};
     lookup_key.ip_addr = dst_ip;
     lookup_key.server_port = server_port;
     
-    if (!has_secret_keys(dst_ip, server_port)) {
-        debug_print("[EGRESS] No keys for source IP, passing through");
+    if (!has_client_config(dst_ip, server_port)) {
+        debug_print("[EGRESS] No config for destination IP, passing through");
         return TC_ACT_OK;
     }
     

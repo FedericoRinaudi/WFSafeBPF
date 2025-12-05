@@ -9,6 +9,7 @@
 #include "network_utils.h"
 #include "checksum.h"
 #include "skb_mark.h"
+#include "client_config.h"
 
 /* Clone fragment to packet - moves fragment data to the beginning of the packet */
 static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_buff *skb) {
@@ -74,9 +75,27 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
                              + (__u32)tcp_header_len;
     __u16 payload_len = skb->len - tcp_payload_offset;
     
+    // Extract destination IP address (egress: packet to remote)
+    __u32 dst_ip;
+    if (extract_dst_ip(skb, &dst_ip) < 0) {
+        return -1;
+    }
+    
+    // Extract server port (egress context)
+    __u16 server_port;
+    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
+        return -1;
+    }
+    
+    // Get fragmentation config and probability for this IP and port
+    struct client_config *config = get_fragmentation_probability(dst_ip, server_port);
+    if (!config) {
+        return -1;
+    }
+    
     // Check if we should fragment
     #if DEBUG == 0
-    if ((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_FRAGMENTATION || payload_len < 64 || skb_mark_get_redirect_count(skb) > 8 ) {
+    if ((bpf_get_prandom_u32() % 100) > config->fragmentation_probability || payload_len < 64 || skb_mark_get_redirect_count(skb) > 8 ) {
         return 1; // No fragmentation for small payloads
     }
     #else
@@ -85,7 +104,7 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
         skip_reason = 1;
     } else if (skb_mark_get_redirect_count(skb) > 8) {
         skip_reason = 2;
-    } else if ((bpf_get_prandom_u32() % 100) > PROBABILITY_OF_FRAGMENTATION) {
+    } else if ((bpf_get_prandom_u32() % 100) > config->fragmentation_probability) {
         skip_reason = 3;
     }
     

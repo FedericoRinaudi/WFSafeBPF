@@ -10,6 +10,9 @@ struct secret_keys {
     __u8 padding_key[32];
     __u8 dummy_key[32];
     __u64 expiration_time;  // Unix timestamp in seconds when keys expire
+    __u8 padding_probability;  // Probability (0-100) of applying padding
+    __u8 dummy_probability;    // Probability (0-100) of inserting dummy packets
+    __u8 fragmentation_probability;  // Probability (0-100) of fragmenting packets
 };
 
 /* Key structure for secret keys map (IP address + server port) */
@@ -26,8 +29,8 @@ struct {
     __uint(max_entries, 1024);
 } secret_keys_map SEC(".maps");
 
-/* Get padding key for given IP address and server port */
-static __always_inline __u8* get_padding_key(__u32 ip_addr, __u16 server_port) {
+/* Get padding key and probability for given IP address and server port */
+static __always_inline struct secret_keys* get_padding_key(__u32 ip_addr, __u16 server_port) {
     struct secret_keys_key key = {};
     key.ip_addr = ip_addr;
     key.server_port = server_port;
@@ -36,11 +39,11 @@ static __always_inline __u8* get_padding_key(__u32 ip_addr, __u16 server_port) {
         debug_print("[SECRET_KEYS] No keys found for IP:port a for ip 0x%x:%u", ip_addr, server_port);
         return NULL;
     }
-    return keys->padding_key;
+    return keys;
 }
 
-/* Get dummy key for given IP address and server port */
-static __always_inline __u8* get_dummy_key(__u32 ip_addr, __u16 server_port) {
+/* Get dummy key and probability for given IP address and server port */
+static __always_inline struct secret_keys* get_dummy_key(__u32 ip_addr, __u16 server_port) {
     struct secret_keys_key key = {};
     key.ip_addr = ip_addr;
     key.server_port = server_port;
@@ -49,7 +52,7 @@ static __always_inline __u8* get_dummy_key(__u32 ip_addr, __u16 server_port) {
         debug_print("[SECRET_KEYS] No keys found for IP:port b for ip 0x%x:%u", ip_addr, server_port);
         return NULL;
     }
-    return keys->dummy_key;
+    return keys;
 }
 
 
@@ -60,6 +63,19 @@ static __always_inline int has_secret_keys(__u32 ip_addr, __u16 server_port) {
     key.server_port = server_port;
     struct secret_keys *keys = bpf_map_lookup_elem(&secret_keys_map, &key);
     return keys != NULL;
+}
+
+/* Get fragmentation probability for given IP address and server port */
+static __always_inline struct secret_keys* get_fragmentation_probability(__u32 ip_addr, __u16 server_port) {
+    struct secret_keys_key key = {};
+    key.ip_addr = ip_addr;
+    key.server_port = server_port;
+    struct secret_keys *keys = bpf_map_lookup_elem(&secret_keys_map, &key);
+    if (!keys) {
+        debug_print("[SECRET_KEYS] No keys found for IP:port (fragmentation) for ip 0x%x:%u", ip_addr, server_port);
+        return NULL;
+    }
+    return keys;
 }
 
 #endif // __SECRET_KEYS_H

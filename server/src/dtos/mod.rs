@@ -1,3 +1,3 @@
-mod secret_keys;
+mod client_config;
 
-pub use secret_keys::SecretKeys;
+pub use client_config::ClientConfig;

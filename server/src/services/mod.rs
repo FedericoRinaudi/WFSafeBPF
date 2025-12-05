@@ -1,3 +1,3 @@
-mod keys_service;
+mod client_config_service;
 
-pub use keys_service::KeysService;
+pub use client_config_service::ClientConfigService;
