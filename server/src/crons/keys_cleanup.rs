@@ -39,14 +39,7 @@ fn cleanup_expired_keys(bpf_state: &BpfState) -> Result<usize, Box<dyn std::erro
     let count = expired_keys.len();
     for key_bytes in expired_keys {
         if let Err(e) = maps_mut.delete("secret_keys_map", &key_bytes) {
-            eprintln!("Errore eliminazione chiave scaduta: {}", e);
-        } else {
-            // Deserializza la chiave per il log
-            if let Ok(key) = SecretKeysKey::from_bytes(&key_bytes) {
-                println!("Chiavi scadute eliminate per IP:porta {}:{}", 
-                    std::net::Ipv4Addr::from(key.ip_addr), 
-                    key.server_port);
-            }
+            eprintln!("Error deleting expired key: {}", e);
         }
     }
     
@@ -61,13 +54,11 @@ fn start_cleanup_task(bpf_state: Arc<BpfState>, interval_secs: u64) {
             interval.tick().await;
             match cleanup_expired_keys(&bpf_state) {
                 Ok(count) if count > 0 => {
-                    println!("[CLEANUP] {} chiavi scadute eliminate", count);
+                    println!("[KEYS_CLEANUP] Removed {} expired keys", count);
                 }
-                Ok(_) => {
-                    println!("[CLEANUP] Nessuna chiave scaduta trovata");
-                }
+                Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[CLEANUP] Errore durante cleanup: {}", e);
+                    eprintln!("[KEYS_CLEANUP] Error during cleanup: {}", e);
                 }
             }
         }
@@ -75,15 +66,15 @@ fn start_cleanup_task(bpf_state: Arc<BpfState>, interval_secs: u64) {
 }
 
 /// Fairing per avviare il task di cleanup quando il server è pronto
-pub struct CleanupFairing {
+pub struct KeysCleanupFairing {
     pub interval_secs: u64,
 }
 
 #[rocket::async_trait]
-impl Fairing for CleanupFairing {
+impl Fairing for KeysCleanupFairing {
     fn info(&self) -> Info {
         Info {
-            name: "Cleanup Task Starter",
+            name: "Keys Cleanup Task Starter",
             kind: Kind::Ignite,
         }
     }
@@ -93,7 +84,7 @@ impl Fairing for CleanupFairing {
             .expect("BpfState non trovato nello stato di Rocket");
         
         start_cleanup_task(Arc::clone(bpf_state), self.interval_secs);
-        println!("[CLEANUP] Task avviato con intervallo di {} secondi", self.interval_secs);
+        println!("[KEYS_CLEANUP] Task started with interval of {} seconds", self.interval_secs);
         
         Ok(rocket)
     }

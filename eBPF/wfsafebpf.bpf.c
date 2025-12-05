@@ -180,14 +180,6 @@ int handle_ingress(struct __sk_buff *skb) {
     if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
         return TC_ACT_OK;
     }
-    // Debug: create key and dump raw bytes
-    struct secret_keys_key lookup_key = {};
-    lookup_key.ip_addr = src_ip;
-    lookup_key.server_port = server_port;
-    __u8 *key_bytes = (__u8 *)&lookup_key;
-    debug_print("[INGRESS] Key bytes: %02x %02x %02x %02x %02x %02x %02x %02x",
-                key_bytes[0], key_bytes[1], key_bytes[2], key_bytes[3],
-                key_bytes[4], key_bytes[5], key_bytes[6], key_bytes[7]);
     
     if (!has_secret_keys(src_ip, server_port)) {
         debug_print("[INGRESS-EXIT] No keys for destination IP, passing through");
@@ -269,8 +261,6 @@ int handle_egress(struct __sk_buff *skb) {
         debug_print("[EGRESS] No keys for source IP, passing through");
         return TC_ACT_OK;
     }
-
-    debug_print("[EGRESS] Keys found for destination IP, processing packet");
     
     __u8 result = skb_mark_get_type(skb);
     

@@ -23,6 +23,7 @@ struct map_value {
     __u32 translated_seq;
     __u32 prev_seq;
     __u64 timestamp_ns;
+    __u8 is_fin_ack;  // 1 se questo ACK conferma un FIN, 0 altrimenti
 };
 
 /* Macro per definire mappe BPF hash */
@@ -48,9 +49,9 @@ DEFINE_TRANSLATION_HASH_MAP(network_to_host_seq_map);
 DEFINE_TRANSLATION_HASH_MAP(host_to_network_ack_map);
 DEFINE_TRANSLATION_HASH_MAP(network_to_host_ack_map);
 
-/* Definizione dei ring buffer per la pulizia delle mappe */
-DEFINE_CLEANUP_QUEUE(cleanup_received_ack);
-DEFINE_CLEANUP_QUEUE(cleanup_sent_ack);
+/* Code per segnalare i flussi completati (FIN) da pulire */
+DEFINE_CLEANUP_QUEUE(completed_flow_ingress);
+DEFINE_CLEANUP_QUEUE(completed_flow_egress);
 
 
 
@@ -86,6 +87,7 @@ static __always_inline __u8 init_translation_map(void* map, struct flow_info *fl
     value.translated_seq = seq_num;
     value.prev_seq = 0;
     value.timestamp_ns = bpf_ktime_get_ns();
+    value.is_fin_ack = 0;
     if (bpf_map_update_elem(map, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to initialize translation map");
         return TC_ACT_SHOT;
@@ -190,15 +192,27 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
     return 1;
 }
 
-static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reverse, struct flow_info *flow, __u32 input_seq_num, __u32 translated_seq, __u16 input_payload_len, __u16 translated_payload_len) {
+static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reverse, struct flow_info *flow, __u32 input_seq_num, __u32 translated_seq, __u16 input_payload_len, __u16 translated_payload_len, __u8 is_fin) {
     struct map_key key;
     key.flow = *flow;
     key.seq = input_seq_num + input_payload_len;
 
+    // Controlla se esiste già un'entry per questa chiave (seq_num)
+    // Se sì, preserva la catena usando il prev_seq dell'entry esistente
+    struct map_value *existing_seq = bpf_map_lookup_elem(seq_num_map, &key);
+    
     struct map_value value;
     value.translated_seq = translated_seq + translated_payload_len;
-    value.prev_seq = input_seq_num;
     value.timestamp_ns = bpf_ktime_get_ns();
+    value.is_fin_ack = 0;
+    
+    if (existing_seq != NULL) {
+        // Preserva la catena: il prev della nuova entry diventa il prev della vecchia
+        value.prev_seq = existing_seq->prev_seq;
+    } else {
+        // Nuova entry: prev_seq è il seq corrente
+        value.prev_seq = input_seq_num;
+    }
 
     if (bpf_map_update_elem(seq_num_map, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to insert new seq_num");
@@ -209,8 +223,9 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
     key.seq = translated_seq + translated_payload_len;
 
     value.translated_seq = input_seq_num + input_payload_len;
-    value.prev_seq = translated_seq;
     value.timestamp_ns = bpf_ktime_get_ns();
+    value.is_fin_ack = is_fin;  // Marca l'ACK come FIN-ACK se questo è un FIN
+    value.prev_seq = 0;  // Non serve più la chain per gli ACK
 
     if (bpf_map_update_elem(ack_map_reverse, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to insert new ack_num");
@@ -220,7 +235,7 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
     return 1;
 }
 
-static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, void* cleanup_queue, __u32 input_ack_num, struct flow_info flow, __u8 ip_header_len) {
+static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, void* fin_cleanup_queue, __u32 input_ack_num, struct flow_info flow, __u8 ip_header_len) {
     struct map_value *translation = lookup_translation_map(ack_map, &flow, input_ack_num);
     if (!translation) {
         debug_print("[SEQ_TRANS] No translation found for ack_num=%u", input_ack_num);
@@ -233,13 +248,21 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         return TC_ACT_SHOT;
     }
     
-    // Offload cleanup to user-space
-    offload_cleanup_to_user_space(cleanup_queue, &flow, input_ack_num);
+    // Non puliamo più le mappe con ogni ACK (causava problemi con ritrasmissioni)
+    // La pulizia avviene solo quando arriva il FIN
+    
+    // Se questo ACK conferma un FIN, segnala per pulizia di tutte le mappe
+    // Inseriamo il translated_seq con il flow invertito
+    if (translation->is_fin_ack == 1) {
+        struct flow_info reversed_flow = flow;
+        reverse_flow(&reversed_flow);
+        offload_cleanup_to_user_space(fin_cleanup_queue, &reversed_flow, translation->translated_seq);
+    }
 
     return 1;
 }
 
-static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_num_map, void* ack_map, void* ack_map_reverse, void* cleanup_queue) {
+static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_num_map, void* ack_map, void* ack_map_reverse, void* fin_cleanup_queue) {
 
     __u8 ip_header_len, tcp_header_len;
     struct flow_info flow;
@@ -279,8 +302,10 @@ static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_
         translated_payload_len = 0;
     }
 
+    __u8 has_fin = is_fin(tcp_flags) ? 1 : 0;
+    
     if(mark!= SKB_MARK_TYPE_DUMMY_CLONE){
-        result = insert_new_seq(seq_num_map, ack_map_reverse, &flow, input_seq_num, translated_seq_num, input_payload_len, translated_payload_len);
+        result = insert_new_seq(seq_num_map, ack_map_reverse, &flow, input_seq_num, translated_seq_num, input_payload_len, translated_payload_len, has_fin);
         if (result != 1) {
             return result;
         }
@@ -298,7 +323,7 @@ static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_
     if (result != 1) {
         return result;
     }
-    result = manage_ack(skb, ack_map, cleanup_queue, input_ack_num, flow, ip_header_len);
+    result = manage_ack(skb, ack_map, fin_cleanup_queue, input_ack_num, flow, ip_header_len);
     if (result != 1) {
         return result;
     }
@@ -315,11 +340,11 @@ static __always_inline __u8 seq_num_translation_init_egress(struct __sk_buff *sk
 }
 
 static __always_inline __u8 manage_seq_num_ingress(struct __sk_buff *skb) {
-    return manage_seq_and_ack(skb, &network_to_host_seq_map, &network_to_host_ack_map, &host_to_network_ack_map, &cleanup_received_ack);
+    return manage_seq_and_ack(skb, &network_to_host_seq_map, &network_to_host_ack_map, &host_to_network_ack_map, &completed_flow_egress);
 }
 
 static __always_inline __u8 manage_seq_num_egress(struct __sk_buff *skb) {
-    return manage_seq_and_ack(skb, &host_to_network_seq_map, &host_to_network_ack_map, &network_to_host_ack_map, &cleanup_sent_ack);
+    return manage_seq_and_ack(skb, &host_to_network_seq_map, &host_to_network_ack_map, &network_to_host_ack_map, &completed_flow_ingress);
 }
 
 #endif /* __SEQ_NUM_TRANSLATION_H */

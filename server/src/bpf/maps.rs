@@ -118,4 +118,29 @@ impl<'a> BpfMapManager<'a> {
         
         Ok(keys)
     }
+
+    /// Pop un elemento da una coda BPF (BPF_MAP_TYPE_QUEUE)
+    /// Usa bpf_map_lookup_and_delete_elem per prelevare e rimuovere atomicamente
+    pub fn pop_from_queue(
+        &self,
+        queue_name: &str,
+    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+        let map = self.get_map(queue_name)?;
+        let value_size = map.value_size() as usize;
+        let mut value_bytes = vec![0u8; value_size];
+        
+        let result = unsafe {
+            libbpf_rs::libbpf_sys::bpf_map_lookup_and_delete_elem(
+                map.as_fd().as_raw_fd(),
+                std::ptr::null(),
+                value_bytes.as_mut_ptr() as *mut std::ffi::c_void,
+            )
+        };
+        
+        if result == 0 {
+            Ok(Some(value_bytes))
+        } else {
+            Ok(None)
+        }
+    }
 }

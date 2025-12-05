@@ -52,10 +52,27 @@ fn rocket() -> _ {
     let rocket = rocket::build();
     let ifname = config::Config::get_interface(&rocket);
     
-    // Leggi l'intervallo di cleanup dalla configurazione
-    let cleanup_interval = rocket.figment()
-        .extract_inner::<u64>("cleanup_interval_seconds")
+    // Leggi gli intervalli di cleanup dalla configurazione
+    let keys_cleanup_interval = rocket.figment()
+        .extract_inner::<u64>("keys_cleanup_interval_seconds")
         .unwrap_or(60); // Default: 60 secondi
+    
+    let translation_cleanup_interval = rocket.figment()
+        .extract_inner::<u64>("translation_cleanup_interval_seconds")
+        .unwrap_or(5); // Default: 5 secondi (più frequente per le traduzioni)
+    
+    // Leggi le soglie per la pulizia aggressiva
+    let cpu_threshold = rocket.figment()
+        .extract_inner::<f32>("cpu_threshold")
+        .unwrap_or(70.0); // Default: 70%
+    
+    let timestamp_threshold_seconds = rocket.figment()
+        .extract_inner::<u64>("timestamp_threshold_seconds")
+        .unwrap_or(3600); // Default: 1 ora
+    
+    let force_cleanup_every = rocket.figment()
+        .extract_inner::<u32>("force_cleanup_every")
+        .unwrap_or(12); // Default: ogni 12 iterazioni
     
     // Carica e attacca i programmi eBPF
     let bpf_loader = bpf::BpfLoader::run(&ifname).unwrap_or_else(|e| {
@@ -68,6 +85,14 @@ fn rocket() -> _ {
     
     rocket
         .manage(bpf_state)
-        .attach(crons::CleanupFairing { interval_secs: cleanup_interval })
+        .attach(crons::KeysCleanupFairing { 
+            interval_secs: keys_cleanup_interval 
+        })
+        .attach(crons::TranslationCleanupFairing { 
+            interval_secs: translation_cleanup_interval,
+            cpu_threshold,
+            timestamp_threshold_secs: timestamp_threshold_seconds,
+            force_cleanup_every,
+        })
         .mount("/", routes![set_keys])
 }

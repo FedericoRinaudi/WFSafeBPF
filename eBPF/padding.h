@@ -35,7 +35,7 @@ static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_p
         return -1;
     }
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < MAX_PADDING_UNITS; i++) {
         __s32 message_start_pos = skb->len - (32 * (i + 2));
         if (message_start_pos < tcp_payload_offset) {
             break;
@@ -73,7 +73,7 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
     }
     __s8 hmac_result;
     __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
-    __u8 random_val = bpf_get_prandom_u32() % 11;
+    __u8 random_val = bpf_get_prandom_u32() % (MAX_PADDING_UNITS + 1);
     
     // Extract destination IP address (egress: packet to remote)
     __u32 dst_ip;
@@ -104,7 +104,7 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
     if(skb->len < tcp_payload_offset + HASH_LEN) {
         return 1;
     }
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < MAX_PADDING_UNITS; i++) {
         if (i >= random_val) {
             break;
         }
