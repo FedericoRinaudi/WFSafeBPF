@@ -2,7 +2,6 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use crate::BpfState;
-use crate::models::{ClientConfigKey, ClientConfigValue};
 
 /// Servizio per gestire l'inserimento della configurazione client nella mappa BPF
 pub struct ClientConfigService;
@@ -31,21 +30,18 @@ impl ClientConfigService {
             .duration_since(UNIX_EPOCH)?;
         let expiration_time = now.as_secs() + duration_seconds;
         
-        // Costruisci la chiave e il valore usando i costruttori
-        let key = ClientConfigKey::new(ip_u32, server_port);
-        let value = ClientConfigValue::new(
+        // Inserisci nella mappa BPF usando il metodo di BpfLoader
+        let mut loader = bpf_state.loader.lock().unwrap();
+        loader.load_config(
+            ip_u32,
+            server_port,
             &padding_key,
             &dummy_key,
             expiration_time,
             padding_probability,
             dummy_probability,
             fragmentation_probability,
-        );
-        
-        // Inserisci nella mappa BPF
-        let mut loader = bpf_state.loader.lock().unwrap();
-        loader.maps()
-            .update("client_config_map", key.as_bytes(), value.as_bytes(), libbpf_rs::MapFlags::ANY)?;
+        )?;
         
         Ok((client_ip, server_port, expiration_time))
     }

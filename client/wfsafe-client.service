@@ -1,0 +1,31 @@
+[Unit]
+Description=WFSafe Client Daemon - VPN Traffic Encryption with eBPF
+Documentation=https://github.com/FedericoRinaudi/WFSafeBPF
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/wfsafe
+ExecStart=/usr/local/bin/wfsafe-client
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/wfsafe /var/log/wfsafe /tmp
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_BPF CAP_SYS_ADMIN CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_NET_ADMIN CAP_BPF CAP_SYS_ADMIN CAP_SYS_RESOURCE
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=512
+
+[Install]
+WantedBy=multi-user.target

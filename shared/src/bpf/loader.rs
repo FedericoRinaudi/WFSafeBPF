@@ -2,8 +2,10 @@ use libbpf_rs::skel::{SkelBuilder, Skel, OpenSkel};
 use libbpf_rs::{TcHookBuilder, TC_EGRESS, TC_INGRESS, MapCore};
 use std::os::fd::AsFd;
 use std::env;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::maps::BpfMapManager;
+use crate::{ClientConfigKey, ClientConfigValue};
 
 // Include the generated libbpf skeleton so the types are available at compile time
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/bpf/wfsafebpf_skel.rs"));
@@ -158,6 +160,78 @@ impl BpfLoader {
         hook.detach()?;
         hook.destroy()?;
         Ok(())
+    }
+    
+    /// Carica una configurazione nella mappa eBPF client_config_map
+    /// 
+    /// # Parametri
+    /// - `ip`: IPv4 del target (in formato u32 big-endian)
+    /// - `port`: porta del servizio
+    /// - `padding_key`: chiave per il padding (32 byte)
+    /// - `dummy_key`: chiave per i pacchetti dummy (32 byte)
+    /// - `expiration_time`: timestamp di scadenza
+    /// - `padding_probability`: probabilità di padding (0-100)
+    /// - `dummy_probability`: probabilità di dummy packets (0-100)
+    /// - `fragmentation_probability`: probabilità di frammentazione (0-100)
+    pub fn load_config(
+        &mut self,
+        ip: u32,
+        port: u16,
+        padding_key: &[u8],
+        dummy_key: &[u8],
+        expiration_time: u64,
+        padding_probability: u8,
+        dummy_probability: u8,
+        fragmentation_probability: u8,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let key = ClientConfigKey::new(ip, port);
+        let value = ClientConfigValue::new(
+            padding_key,
+            dummy_key,
+            expiration_time,
+            padding_probability,
+            dummy_probability,
+            fragmentation_probability,
+        );
+        
+        self.maps().update(
+            "client_config_map",
+            key.as_bytes(),
+            value.as_bytes(),
+            libbpf_rs::MapFlags::ANY,
+        )?;
+        
+        Ok(())
+    }
+    
+    /// Rimuove una configurazione dalla mappa eBPF client_config_map
+    pub fn remove_config(&mut self, ip: u32, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+        let key = ClientConfigKey::new(ip, port);
+        self.maps().delete("client_config_map", key.as_bytes())?;
+        Ok(())
+    }
+    
+    /// Pulisce le configurazioni scadute dalla mappa eBPF client_config_map
+    pub fn cleanup_expired_configs(&mut self) -> Result<usize, Box<dyn std::error::Error>> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)?
+            .as_secs();
+        
+        let keys = self.maps().iter_keys("client_config_map")?;
+        let mut removed_count = 0;
+        
+        for key in keys {
+            if let Some(value_bytes) = self.maps().lookup("client_config_map", &key)? {
+                if let Ok(value) = ClientConfigValue::from_bytes(&value_bytes) {
+                    if value.is_expired(now) {
+                        let _ = self.maps().delete("client_config_map", &key);
+                        removed_count += 1;
+                    }
+                }
+            }
+        }
+        
+        Ok(removed_count)
     }
 }
 

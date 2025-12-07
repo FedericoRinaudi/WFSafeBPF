@@ -1,6 +1,5 @@
 #[macro_use] extern crate rocket;
 
-mod bpf;
 mod config;
 mod crons;
 mod dtos;
@@ -14,11 +13,7 @@ use rocket::http::Status;
 use dtos::ClientConfig;
 use guards::ClientRealAddr;
 use services::ClientConfigService;
-
-// Stato globale per gestire il BPF loader
-pub struct BpfState {
-    pub loader: Mutex<bpf::BpfLoader>,
-}
+use shared::{BpfLoader, BpfState};
 
 // Struttura per le probabilità di default
 pub struct DefaultProbabilities {
@@ -107,12 +102,12 @@ fn rocket() -> _ {
         .unwrap_or(70); // Default: 70%
     
     // Carica e attacca i programmi eBPF
-    let bpf_loader = bpf::BpfLoader::run(&ifname).unwrap_or_else(|e| {
+    let bpf_loader = BpfLoader::run(&ifname).unwrap_or_else(|e| {
         panic!("Error running eBPF program: {}", e);
     });
     
     let bpf_state = Arc::new(BpfState {
-        loader: Mutex::new(bpf_loader),
+        loader: Arc::new(Mutex::new(bpf_loader)),
     });
     
     let default_probabilities = DefaultProbabilities {

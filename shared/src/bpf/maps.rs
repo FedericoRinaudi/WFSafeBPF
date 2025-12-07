@@ -1,5 +1,5 @@
-use libbpf_rs::MapCore;
 use std::os::fd::{AsRawFd, AsFd};
+use libbpf_rs::MapCore;
 
 /// Wrapper per gestire le operazioni sulle mappe eBPF
 pub struct BpfMapManager<'a> {

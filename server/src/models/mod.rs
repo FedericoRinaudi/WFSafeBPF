@@ -1,5 +1,1 @@
-mod client_config;
-mod seq_translation;
-
-pub use client_config::{ClientConfigKey, ClientConfigValue};
-pub use seq_translation::{MapKey, MapValue};
+// seq_translation è stato spostato in shared/models/seq_translation.rs
