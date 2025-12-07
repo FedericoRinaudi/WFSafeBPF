@@ -9,4 +9,9 @@ timestamp_threshold_seconds = 60
 force_cleanup_every = 20
 default_padding_probability = 30
 default_dummy_probability = 30
-default_fragmentation_probability = 30  
+default_fragmentation_probability = 30
+
+# Configurazione TLS
+[default.tls]
+certs = "/path/to/cert.pem"
+key = "/path/to/key.pem"  

@@ -20,6 +20,17 @@ pub struct HttpClient {
 
 impl HttpClient {
     pub fn new() -> Self {
+        // Client che accetta certificati autofirmati (solo per sviluppo/test)
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true) // Rimuovi in produzione!
+            .build()
+            .expect("Failed to build HTTP client");
+        
+        Self { client }
+    }
+    
+    /// Crea un client che verifica i certificati (per produzione)
+    pub fn new_secure() -> Self {
         Self {
             client: reqwest::Client::new(),
         }
@@ -42,7 +53,7 @@ impl HttpClient {
             fragmentation_probability: server.fragmentation_probability,
         };
         
-        let url = format!("http://{}:{}{}", server.server_ip, server.http_port, server.endpoint);
+        let url = format!("https://{}:{}{}", server.server_ip, server.http_port, server.endpoint);
         
         let response = self.client
             .post(&url)
