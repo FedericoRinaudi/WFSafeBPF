@@ -17,7 +17,7 @@ fn main() {
     // Path to the eBPF source file
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
     let in_path = PathBuf::from(&manifest_dir)
-        .join("..").join("eBPF").join("wfsafebpf.bpf.c");
+        .join("..").join("kernel").join("wfsafebpf.bpf.c");
     
     // Output directory: shared/src/bpf/
     let mut out = PathBuf::from(&manifest_dir).join("src").join("bpf");

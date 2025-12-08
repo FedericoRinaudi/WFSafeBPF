@@ -13,7 +13,7 @@ use rocket::http::Status;
 use dtos::ClientConfig;
 use guards::ClientRealAddr;
 use services::ClientConfigService;
-use shared::{BpfLoader, BpfState};
+use user::{BpfLoader, BpfState};
 
 // Struttura per le probabilità di default
 pub struct DefaultProbabilities {

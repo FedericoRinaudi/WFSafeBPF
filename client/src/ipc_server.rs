@@ -1,6 +1,6 @@
 use crate::handlers;
 use crate::ipc::{DaemonCommand, DaemonResponse};
-use shared::bpf::BpfLoader;
+use user::bpf::BpfLoader;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;

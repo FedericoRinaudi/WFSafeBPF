@@ -1,8 +1,8 @@
 use crate::config::ClientConfig;
 use crate::http_client::HttpClient;
 use crate::ipc_server::IpcServer;
-use shared::bpf::BpfLoader;
-use shared::{BpfState, start_translation_cleanup_task};
+use user::bpf::BpfLoader;
+use user::{BpfState, start_translation_cleanup_task};
 use tokio::time::{sleep, Duration};
 use std::sync::{Arc, Mutex};
 use tokio::signal;

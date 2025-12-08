@@ -1,7 +1,7 @@
 use crate::config::{ClientConfig, ServerConfig};
 use crate::http_client::HttpClient;
 use crate::ipc::{DaemonCommand, DaemonResponse};
-use shared::bpf::BpfLoader;
+use user::bpf::BpfLoader;
 use std::sync::{Arc, Mutex};
 
 /// Handler per il comando List

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::{Rocket, Build};
-use shared::{BpfState, start_translation_cleanup_task};
+use user::{BpfState, start_translation_cleanup_task};
 
 /// Fairing per avviare il task di cleanup delle traduzioni quando il server è pronto
 pub struct TranslationCleanupFairing {
