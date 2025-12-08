@@ -4,6 +4,39 @@ use crate::ipc::{DaemonCommand, DaemonResponse};
 use user::bpf::BpfLoader;
 use std::sync::{Arc, Mutex};
 
+/// Helper per caricare la configurazione in eBPF
+fn load_config_to_ebpf(
+    loader: &mut BpfLoader,
+    server: &ServerConfig,
+    padding_key: &[u8],
+    dummy_key: &[u8],
+) -> Result<(), String> {
+    let client_ip = server.server_ip.parse::<std::net::IpAddr>()
+        .map_err(|_| format!("IP non valido: {}", server.server_ip))?;
+    
+    let expiration_timestamp = server.expiration_timestamp() as u64;
+    let duration = expiration_timestamp.saturating_sub(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+    
+    let bpf_config = user::models::BpfConfig::new(
+        padding_key.to_vec(),
+        dummy_key.to_vec(),
+        duration,
+        client_ip,
+        server.service_port,
+        server.padding_probability,
+        server.dummy_probability,
+        server.fragmentation_probability,
+    );
+    
+    loader.load_config(&bpf_config)
+        .map_err(|e| format!("Errore nel caricamento in eBPF: {}", e))
+}
+
 /// Handler per il comando List
 pub async fn handle_list_command(config_path: &str) -> DaemonResponse {
     match ClientConfig::from_file(config_path) {
@@ -59,21 +92,31 @@ pub async fn handle_add_command(
     
     // Carica in eBPF
     if let Ok(mut loader) = bpf_loader.lock() {
-        let ip_u32 = match server.server_ip.parse::<std::net::Ipv4Addr>() {
-            Ok(ip) => u32::from_be_bytes(ip.octets()),
+        let client_ip = match server.server_ip.parse::<std::net::IpAddr>() {
+            Ok(ip) => ip,
             Err(_) => return DaemonResponse::Error(format!("IP non valido: {}", server.server_ip)),
         };
         
-        if let Err(e) = loader.load_config(
-            ip_u32,
+        let expiration_timestamp = server.expiration_timestamp() as u64;
+        let duration = expiration_timestamp.saturating_sub(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
+        
+        let bpf_config = user::models::BpfConfig::new(
+            padding_key.to_vec(),
+            dummy_key.to_vec(),
+            duration,
+            client_ip,
             server.service_port,
-            &padding_key,
-            &dummy_key,
-            server.expiration_timestamp() as u64,
             server.padding_probability,
             server.dummy_probability,
             server.fragmentation_probability,
-        ) {
+        );
+        
+        if let Err(e) = loader.load_config(&bpf_config) {
             return DaemonResponse::Error(format!("Errore nel caricamento in eBPF: {}", e));
         }
     } else {
@@ -139,22 +182,8 @@ pub async fn handle_update_command(
     
     // Carica in eBPF
     if let Ok(mut loader) = bpf_loader.lock() {
-        let ip_u32 = match server.server_ip.parse::<std::net::Ipv4Addr>() {
-            Ok(ip) => u32::from_be_bytes(ip.octets()),
-            Err(_) => return DaemonResponse::Error(format!("IP non valido: {}", server.server_ip)),
-        };
-        
-        if let Err(e) = loader.load_config(
-            ip_u32,
-            server.service_port,
-            &padding_key,
-            &dummy_key,
-            server.expiration_timestamp() as u64,
-            server.padding_probability,
-            server.dummy_probability,
-            server.fragmentation_probability,
-        ) {
-            return DaemonResponse::Error(format!("Errore nel caricamento in eBPF: {}", e));
+        if let Err(e) = load_config_to_ebpf(&mut loader, server, &padding_key, &dummy_key) {
+            return DaemonResponse::Error(e);
         }
     } else {
         return DaemonResponse::Error("Errore nel lock del loader eBPF".to_string());
@@ -199,22 +228,8 @@ pub async fn handle_renew_command(
     
     // Carica in eBPF
     if let Ok(mut loader) = bpf_loader.lock() {
-        let ip_u32 = match server.server_ip.parse::<std::net::Ipv4Addr>() {
-            Ok(ip) => u32::from_be_bytes(ip.octets()),
-            Err(_) => return DaemonResponse::Error(format!("IP non valido: {}", server.server_ip)),
-        };
-        
-        if let Err(e) = loader.load_config(
-            ip_u32,
-            server.service_port,
-            &padding_key,
-            &dummy_key,
-            server.expiration_timestamp() as u64,
-            server.padding_probability,
-            server.dummy_probability,
-            server.fragmentation_probability,
-        ) {
-            return DaemonResponse::Error(format!("Errore nel caricamento in eBPF: {}", e));
+        if let Err(e) = load_config_to_ebpf(&mut loader, server, &padding_key, &dummy_key) {
+            return DaemonResponse::Error(e);
         }
     } else {
         return DaemonResponse::Error("Errore nel lock del loader eBPF".to_string());

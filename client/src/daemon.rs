@@ -205,21 +205,31 @@ impl Daemon {
     ) -> Result<(), Box<dyn std::error::Error + 'static>> {
         let mut loader = bpf_loader.lock().map_err(|e| format!("Lock error: {}", e))?;
         
-        let ip_u32 = match server.server_ip.parse::<std::net::Ipv4Addr>() {
-            Ok(ip) => u32::from_be_bytes(ip.octets()),
+        let client_ip = match server.server_ip.parse::<std::net::IpAddr>() {
+            Ok(ip) => ip,
             Err(e) => return Err(format!("IP non valido '{}': {}", server.server_ip, e).into()),
         };
         
-        loader.load_config(
-            ip_u32,
+        let expiration_timestamp = server.expiration_timestamp() as u64;
+        let duration = expiration_timestamp.saturating_sub(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
+        
+        let bpf_config = user::models::BpfConfig::new(
+            padding_key.to_vec(),
+            dummy_key.to_vec(),
+            duration,
+            client_ip,
             server.service_port,
-            padding_key,
-            dummy_key,
-            server.expiration_timestamp() as u64,
             server.padding_probability,
             server.dummy_probability,
             server.fragmentation_probability,
-        )?;
+        );
+        
+        loader.load_config(&bpf_config)?;
         
         Ok(())
     }

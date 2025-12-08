@@ -43,9 +43,8 @@ fn set_config(
     let (padding_key, dummy_key) = config.parse_keys()
         .map_err(|_| Status::BadRequest)?;
     
-    // Inserimento tramite il service
-    let (ip, port, expiration_time) = ClientConfigService::insert_config(
-        bpf_state.inner(),
+    // Crea la configurazione BPF
+    let bpf_config = user::models::BpfConfig::new(
         padding_key,
         dummy_key,
         config.duration_seconds,
@@ -54,6 +53,12 @@ fn set_config(
         padding_prob,
         dummy_prob,
         frag_prob,
+    );
+    
+    // Inserimento tramite il service
+    let (ip, port, expiration_time) = ClientConfigService::insert_config(
+        bpf_state.inner(),
+        bpf_config,
     ).map_err(|e| {
         eprintln!("Errore inserimento configurazione: {}", e);
         Status::InternalServerError

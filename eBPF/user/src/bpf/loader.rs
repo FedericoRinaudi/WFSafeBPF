@@ -165,33 +165,22 @@ impl BpfLoader {
     /// Carica una configurazione nella mappa eBPF client_config_map
     /// 
     /// # Parametri
-    /// - `ip`: IPv4 del target (in formato u32 big-endian)
-    /// - `port`: porta del servizio
-    /// - `padding_key`: chiave per il padding (32 byte)
-    /// - `dummy_key`: chiave per i pacchetti dummy (32 byte)
-    /// - `expiration_time`: timestamp di scadenza
-    /// - `padding_probability`: probabilità di padding (0-100)
-    /// - `dummy_probability`: probabilità di dummy packets (0-100)
-    /// - `fragmentation_probability`: probabilità di frammentazione (0-100)
+    /// - `config`: Configurazione BPF contenente tutti i parametri necessari
     pub fn load_config(
         &mut self,
-        ip: u32,
-        port: u16,
-        padding_key: &[u8],
-        dummy_key: &[u8],
-        expiration_time: u64,
-        padding_probability: u8,
-        dummy_probability: u8,
-        fragmentation_probability: u8,
+        config: &crate::models::BpfConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let key = ClientConfigKey::new(ip, port);
+        let ip = config.ip_as_u32()?;
+        let expiration_time = config.calculate_expiration()?;
+        
+        let key = ClientConfigKey::new(ip, config.server_port);
         let value = ClientConfigValue::new(
-            padding_key,
-            dummy_key,
+            &config.padding_key,
+            &config.dummy_key,
             expiration_time,
-            padding_probability,
-            dummy_probability,
-            fragmentation_probability,
+            config.padding_probability,
+            config.dummy_probability,
+            config.fragmentation_probability,
         );
         
         self.maps().update(
