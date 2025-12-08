@@ -1,8 +1,15 @@
 #ifndef __CONFIG_H
 #define __CONFIG_H
 
-/* Debug configuration - define DEBUG to enable debug prints */
-#define DEBUG 1
+/* Debug configuration - DEBUG is passed via -DDEBUG flag at compile time */
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+/* Server or Client configuration - IS_SERVER is passed via -DIS_SERVER flag at compile time */
+#ifndef IS_SERVER
+#define IS_SERVER 0
+#endif
 
 #if DEBUG
 #define debug_print(fmt, ...) bpf_printk(fmt, ##__VA_ARGS__)

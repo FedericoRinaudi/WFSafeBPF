@@ -14,11 +14,11 @@ fn start_cleanup_task(bpf_state: Arc<BpfState>, interval_secs: u64) {
             let mut loader = bpf_state.loader.lock().unwrap();
             match loader.cleanup_expired_configs() {
                 Ok(count) if count > 0 => {
-                    println!("[CONFIG_CLEANUP] Removed {} expired configs", count);
+                    log_debug!("[CONFIG_CLEANUP] Removed {} expired configs", count);
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("[CONFIG_CLEANUP] Error during cleanup: {}", e);
+                    log_error!("[CONFIG_CLEANUP] Error during cleanup: {}", e);
                 }
             }
         }
@@ -44,7 +44,7 @@ impl Fairing for ConfigCleanupFairing {
             .expect("BpfState non trovato nello stato di Rocket");
         
         start_cleanup_task(Arc::clone(bpf_state), self.interval_secs);
-        println!("[CONFIG_CLEANUP] Task started with interval of {} seconds", self.interval_secs);
+        log_debug!("[CONFIG_CLEANUP] Task started with interval of {} seconds", self.interval_secs);
         
         Ok(rocket)
     }

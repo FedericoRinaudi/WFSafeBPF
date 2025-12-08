@@ -9,11 +9,11 @@ impl Config {
             .figment()
             .extract_inner("iface")
             .unwrap_or_else(|_| {
-                println!("Configurazione 'iface' non trovata, usando 'lo' come default");
+                log_debug!("Configurazione 'iface' non trovata, usando 'lo' come default");
                 "lo".to_string()
             });
         
-        println!("Interfaccia di rete configurata: {}", ifname);
+        log_info!("Interfaccia di rete configurata: {}", ifname);
         ifname
     }
     

@@ -1,5 +1,8 @@
 #[macro_use] extern crate rocket;
 
+#[macro_use]
+mod log_macros;
+
 mod config;
 mod crons;
 mod dtos;
@@ -32,12 +35,12 @@ fn set_config(
 ) -> Result<String, Status> {
     // Parsing delle chiavi dal DTO e impostazione probabilità default
     let mut config = config.into_inner();
-    println!("[CONFIG] Ricevute probabilità: padding={:?}, dummy={:?}, fragmentation={:?}", 
+    log_debug!("[CONFIG] Ricevute probabilità: padding={:?}, dummy={:?}, fragmentation={:?}", 
              config.padding_probability, config.dummy_probability, config.fragmentation_probability);
     
     config = config.with_default_probabilities(default_probs.padding, default_probs.dummy, default_probs.fragmentation);
     let (padding_prob, dummy_prob, frag_prob) = config.get_probabilities();
-    println!("[CONFIG] Dopo default: padding={}, dummy={}, fragmentation={}", 
+    log_debug!("[CONFIG] Dopo default: padding={}, dummy={}, fragmentation={}", 
              padding_prob, dummy_prob, frag_prob);
     
     let (padding_key, dummy_key) = config.parse_keys()
@@ -60,7 +63,7 @@ fn set_config(
         bpf_state.inner(),
         bpf_config,
     ).map_err(|e| {
-        eprintln!("Errore inserimento configurazione: {}", e);
+        log_error!("Errore inserimento configurazione: {}", e);
         Status::InternalServerError
     })?;
     

@@ -33,7 +33,7 @@ impl IpcServer {
         }
         
         let listener = UnixListener::bind(SOCKET_PATH)?;
-        println!("Server IPC in ascolto su {}", SOCKET_PATH);
+        log_debug!("Server IPC in ascolto su {}", SOCKET_PATH);
         
         let server = Arc::new(self);
         
@@ -43,7 +43,7 @@ impl IpcServer {
             
             tokio::spawn(async move {
                 if let Err(e) = server_clone.handle_connection(stream).await {
-                    eprintln!("Errore nella gestione connessione IPC: {}", e);
+                    log_error!("Errore nella gestione connessione IPC: {}", e);
                 }
             });
         }

@@ -1,3 +1,6 @@
+#[macro_use]
+mod log_macros;
+
 mod config;
 mod http_client;
 mod cli;

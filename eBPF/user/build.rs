@@ -14,6 +14,13 @@ fn main() {
         return;
     };
 
+    // Determine if we're building in debug or release mode
+    let debug = if cfg!(debug_assertions) {
+        1
+    } else {
+        0
+    };
+
     // Path to the eBPF source file
     let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set");
     let in_path = PathBuf::from(&manifest_dir)
@@ -26,14 +33,15 @@ fn main() {
     fs::create_dir_all(&out).expect("failed to create src/bpf directory");
     out.push("wfsafebpf_skel.rs");
 
-    // Pass IS_SERVER flag to clang
-    let clang_arg = format!("-DIS_SERVER={}", is_server);
+    // Pass IS_SERVER and DEBUG flags to clang
+    let is_server_arg = format!("-DIS_SERVER={}", is_server);
+    let debug_arg = format!("-DDEBUG={}", debug);
 
-    println!("cargo:warning=Building eBPF skeleton with IS_SERVER={}", is_server);
+    println!("cargo:warning=Building eBPF skeleton with IS_SERVER={}, DEBUG={}", is_server, debug);
 
     SkeletonBuilder::new()
         .source(&in_path)
-        .clang_args([clang_arg.as_str()])
+        .clang_args([is_server_arg.as_str(), debug_arg.as_str()])
         .build_and_generate(&out)
         .unwrap();
     
