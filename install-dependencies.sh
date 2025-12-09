@@ -93,26 +93,38 @@ log_info "Installing Rust via rustup for user: $ACTUAL_USER..."
 if ! command -v rustc >/dev/null 2>&1 || [ ! -f "$ACTUAL_HOME/.cargo/bin/rustc" ]; then
     log_info "Downloading and installing Rust..."
     su - "$ACTUAL_USER" -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable'
-    
-    # Source cargo environment for the user
-    export PATH="$ACTUAL_HOME/.cargo/bin:$PATH"
-    
     log_success "Rust installed successfully"
 else
     log_success "Rust is already installed"
 fi
 
+# Configure cargo environment immediately
+log_info "Configuring cargo environment..."
+. "$ACTUAL_HOME/.cargo/env"
+
+# Export PATH for cargo in this script
+export PATH="$ACTUAL_HOME/.cargo/bin:$PATH"
+export CARGO_HOME="$ACTUAL_HOME/.cargo"
+export RUSTUP_HOME="$ACTUAL_HOME/.rustup"
+
+# Configure clang-15 for Rust/Cargo builds
+log_info "Configuring clang-15 for Rust builds..."
+export CC=clang-15
+export CXX=clang++-15
+export AR=llvm-ar-15
+export RANLIB=llvm-ranlib-15
+
 # Ensure Rust is up to date
 log_info "Updating Rust toolchain..."
-su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustup update stable'
+rustup update stable
 
 # Install additional Rust components that might be needed
 log_info "Installing additional Rust components..."
-su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustup component add clippy rustfmt'
+rustup component add clippy rustfmt
 
 # Verify Rust installation
-if su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustc --version' >/dev/null 2>&1; then
-    RUST_VERSION=$(su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustc --version')
+if rustc --version >/dev/null 2>&1; then
+    RUST_VERSION=$(rustc --version)
     log_success "Rust toolchain ready: $RUST_VERSION"
 else
     log_error "Rust installation verification failed"
@@ -220,14 +232,48 @@ else
     exit 1
 fi
 
+# Configure Cargo to use clang-15 for all projects
+log_info "Configuring Cargo to use clang-15..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Function to create .cargo/config.toml with clang-15 settings
+configure_cargo_project() {
+    local project_dir="$1"
+    local cargo_config_dir="$project_dir/.cargo"
+    local cargo_config_file="$cargo_config_dir/config.toml"
+    
+    mkdir -p "$cargo_config_dir"
+    
+    cat > "$cargo_config_file" << 'EOF'
+[build]
+rustflags = ["-C", "linker=clang-15"]
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang-15"
+ar = "llvm-ar-15"
+
+[env]
+CC = "clang-15"
+CXX = "clang++-15"
+AR = "llvm-ar-15"
+EOF
+    
+    chown -R "$ACTUAL_USER:$ACTUAL_USER" "$cargo_config_dir"
+    log_success "Configured Cargo for $project_dir"
+}
+
+# Configure each Rust project
+configure_cargo_project "$SCRIPT_DIR/eBPF/user"
+configure_cargo_project "$SCRIPT_DIR/client"
+configure_cargo_project "$SCRIPT_DIR/server"
+
 # Build Rust projects
 log_info "Building Rust projects..."
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Build eBPF user-space library
 log_info "Building eBPF user-space library..."
 cd "$SCRIPT_DIR/eBPF/user"
-if su - "$ACTUAL_USER" -c "cd '$SCRIPT_DIR/eBPF/user' && source '$ACTUAL_HOME/.cargo/env' && cargo build"; then
+if cargo build 2>&1; then
     log_success "eBPF user-space library built successfully"
 else
     log_warning "eBPF user-space library build failed (this might be expected during initial setup)"
@@ -236,7 +282,7 @@ fi
 # Build client
 log_info "Building client..."
 cd "$SCRIPT_DIR/client"
-if su - "$ACTUAL_USER" -c "cd '$SCRIPT_DIR/client' && source '$ACTUAL_HOME/.cargo/env' && cargo build"; then
+if cargo build 2>&1; then
     log_success "Client built successfully"
 else
     log_warning "Client build failed (this might be expected during initial setup)"
@@ -245,7 +291,7 @@ fi
 # Build server
 log_info "Building server..."
 cd "$SCRIPT_DIR/server"
-if su - "$ACTUAL_USER" -c "cd '$SCRIPT_DIR/server' && source '$ACTUAL_HOME/.cargo/env' && cargo build"; then
+if cargo build 2>&1; then
     log_success "Server built successfully"
 else
     log_warning "Server build failed (this might be expected during initial setup)"
@@ -262,6 +308,13 @@ echo "  3. Build client:             cd client && cargo build --release"
 echo "  4. Build server:             cd server && cargo build --release"
 echo ""
 log_info "Rust is installed for user: $ACTUAL_USER"
-log_info "To use Rust in your shell, run: source ~/.cargo/env"
+log_info "Cargo is configured and ready to use!"
 echo ""
 log_info "vmlinux.h is now available for eBPF development"
+echo ""
+log_warning "NOTE: To use cargo in a new terminal session, run:"
+echo -e "${GREEN}  . ~/.cargo/env${NC}"
+echo ""
+log_info "Cargo is configured to use clang-15 for all builds (via .cargo/config.toml)"
+echo ""
+log_info "Or simply open a new terminal"
