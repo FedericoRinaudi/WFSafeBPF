@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# eBPF Packet Dropper - Ubuntu Dependency Installation Script
-# Simplified script for Ubuntu with clang-15 only
+# WFSafe - Complete Dependency Installation Script
+# Installs all dependencies for eBPF, Rust, and the entire project
 
 set -e
 
@@ -17,9 +17,9 @@ log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Check if Ubuntu
-if ! grep -qi ubuntu /etc/os-release; then
-    log_error "This script is designed for Ubuntu only"
+# Check if Ubuntu/Debian
+if ! grep -qiE 'ubuntu|debian' /etc/os-release; then
+    log_error "This script is designed for Ubuntu/Debian systems only"
     exit 1
 fi
 
@@ -28,6 +28,10 @@ if [ "$EUID" -ne 0 ]; then
     log_error "Please run with sudo: sudo ./install-dependencies.sh"
     exit 1
 fi
+
+# Get the actual user (not root)
+ACTUAL_USER="${SUDO_USER:-$USER}"
+ACTUAL_HOME=$(getent passwd "$ACTUAL_USER" | cut -d: -f6)
 
 log_info "Installing eBPF dependencies for Ubuntu..."
 
@@ -41,7 +45,11 @@ apt-get install -y \
     build-essential \
     gcc \
     make \
-    pkg-config
+    pkg-config \
+    curl \
+    git \
+    wget \
+    ca-certificates
 
 # eBPF specific dependencies
 log_info "Installing eBPF dependencies..."
@@ -73,8 +81,43 @@ if ! command -v bpftool >/dev/null; then
     apt-get install -y linux-tools-common
 fi
 
-# Netcat for testing
-apt-get install -y netcat-openbsd
+# Additional dependencies for Rust and Rocket
+log_info "Installing additional development dependencies..."
+apt-get install -y \
+    libssl-dev \
+    openssl \
+    netcat-openbsd
+
+# Install Rust for the actual user (not root)
+log_info "Installing Rust via rustup for user: $ACTUAL_USER..."
+if ! command -v rustc >/dev/null 2>&1 || [ ! -f "$ACTUAL_HOME/.cargo/bin/rustc" ]; then
+    log_info "Downloading and installing Rust..."
+    su - "$ACTUAL_USER" -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable'
+    
+    # Source cargo environment for the user
+    export PATH="$ACTUAL_HOME/.cargo/bin:$PATH"
+    
+    log_success "Rust installed successfully"
+else
+    log_success "Rust is already installed"
+fi
+
+# Ensure Rust is up to date
+log_info "Updating Rust toolchain..."
+su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustup update stable'
+
+# Install additional Rust components that might be needed
+log_info "Installing additional Rust components..."
+su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustup component add clippy rustfmt'
+
+# Verify Rust installation
+if su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustc --version' >/dev/null 2>&1; then
+    RUST_VERSION=$(su - "$ACTUAL_USER" -c 'source "$HOME/.cargo/env" && rustc --version')
+    log_success "Rust toolchain ready: $RUST_VERSION"
+else
+    log_error "Rust installation verification failed"
+    exit 1
+fi
 
 log_success "Dependencies installed successfully!"
 
@@ -115,7 +158,7 @@ find_bpftool() {
 generate_vmlinux() {
     local bpftool_path=$(find_bpftool)
     local script_dir="$(dirname "$0")"
-    local ebpf_dir="$script_dir/eBPF"
+    local ebpf_dir="$script_dir/eBPF/kernel"
     
     if [ -n "$bpftool_path" ]; then
         log_info "Found bpftool at: $bpftool_path"
@@ -163,18 +206,62 @@ if ! generate_vmlinux; then
     exit 1
 fi
 
-# Test build
-log_info "Testing build..."
-cd "$(dirname "$0")/eBPF"
+# Test eBPF build
+log_info "Testing eBPF build..."
+cd "$(dirname "$0")/eBPF/kernel"
 
 make clean 2>/dev/null || true
 
 if make all; then
-    log_success "Build test successful!"
+    log_success "eBPF build test successful!"
     make clean
-    log_info "Ready to use! Run 'cd eBPF && make all' to build"
-    log_info "vmlinux.h is now available for eBPF development"
 else
-    log_error "Build test failed"
+    log_error "eBPF build test failed"
     exit 1
 fi
+
+# Build Rust projects
+log_info "Building Rust projects..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Build eBPF user-space library
+log_info "Building eBPF user-space library..."
+cd "$SCRIPT_DIR/eBPF/user"
+if su - "$ACTUAL_USER" -c "cd '$SCRIPT_DIR/eBPF/user' && source '$ACTUAL_HOME/.cargo/env' && cargo build"; then
+    log_success "eBPF user-space library built successfully"
+else
+    log_warning "eBPF user-space library build failed (this might be expected during initial setup)"
+fi
+
+# Build client
+log_info "Building client..."
+cd "$SCRIPT_DIR/client"
+if su - "$ACTUAL_USER" -c "cd '$SCRIPT_DIR/client' && source '$ACTUAL_HOME/.cargo/env' && cargo build"; then
+    log_success "Client built successfully"
+else
+    log_warning "Client build failed (this might be expected during initial setup)"
+fi
+
+# Build server
+log_info "Building server..."
+cd "$SCRIPT_DIR/server"
+if su - "$ACTUAL_USER" -c "cd '$SCRIPT_DIR/server' && source '$ACTUAL_HOME/.cargo/env' && cargo build"; then
+    log_success "Server built successfully"
+else
+    log_warning "Server build failed (this might be expected during initial setup)"
+fi
+
+log_success "============================================"
+log_success "All dependencies installed successfully!"
+log_success "============================================"
+echo ""
+log_info "Next steps:"
+echo "  1. Build eBPF kernel module: cd eBPF/kernel && make"
+echo "  2. Build eBPF user-space:    cd eBPF/user && cargo build --release"
+echo "  3. Build client:             cd client && cargo build --release"
+echo "  4. Build server:             cd server && cargo build --release"
+echo ""
+log_info "Rust is installed for user: $ACTUAL_USER"
+log_info "To use Rust in your shell, run: source ~/.cargo/env"
+echo ""
+log_info "vmlinux.h is now available for eBPF development"
