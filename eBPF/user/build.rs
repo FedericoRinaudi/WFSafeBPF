@@ -41,6 +41,7 @@ fn main() {
 
     SkeletonBuilder::new()
         .source(&in_path)
+        .clang("clang-15")
         .clang_args([is_server_arg.as_str(), debug_arg.as_str()])
         .build_and_generate(&out)
         .unwrap();
