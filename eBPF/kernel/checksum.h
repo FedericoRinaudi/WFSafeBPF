@@ -52,19 +52,19 @@ static __always_inline __s8 update_checksums_inc(struct __sk_buff *skb, __u8 ip_
 static __always_inline __s8 update_checksums_seq_num(struct __sk_buff *skb, __u8 ip_header_len, __u32 old_seq_num, __u32 new_seq_num) {
     __be32 old_seq_num_be = bpf_htonl(old_seq_num);
     __be32 new_seq_num_be = bpf_htonl(new_seq_num);
+    
     return bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
                            old_seq_num_be, new_seq_num_be,
-                           0) < 0;
+                           sizeof(__be32));
 }
 
 static __always_inline __s8 update_checksums_ack_num(struct __sk_buff *skb, __u8 ip_header_len, __u32 old_ack_num, __u32 new_ack_num) {
     __be32 old_ack_num_be = bpf_htonl(old_ack_num);
     __be32 new_ack_num_be = bpf_htonl(new_ack_num);
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
+    
+    return bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
                            old_ack_num_be, new_ack_num_be,
-                           0) < 0)
-        return -1;
-    return 0;
+                           sizeof(__be32));
 }
 
 /* Recompute TCP checksum for the entire packet */

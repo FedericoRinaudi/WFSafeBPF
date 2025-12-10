@@ -184,7 +184,7 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
         return result;
     }
 
-    if (update_checksums_seq_num(skb, ip_header_len, translation->prev_seq, *output_seq_num) < 0) {
+    if (update_checksums_seq_num(skb, ip_header_len, input_seq_num, *output_seq_num)!=0) {
         debug_print("[SEQ_TRANS] Failed to update checksums for seq_num");
         return TC_ACT_SHOT;
     }
@@ -241,10 +241,14 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         debug_print("[SEQ_TRANS] No translation found for ack_num=%u", input_ack_num);
         return TC_ACT_SHOT;
     }
-    
    // Replace ack_num in packet
     if (replace_ack_num(skb, ip_header_len, translation->translated_seq) < 0) {
         debug_print("[SEQ_TRANS] Failed to replace ack_num");
+        return TC_ACT_SHOT;
+    }
+
+    if (update_checksums_ack_num(skb, ip_header_len, input_ack_num, translation->translated_seq)!=0) {
+        debug_print("[SEQ_TRANS] Failed to update checksums for ack_num");
         return TC_ACT_SHOT;
     }
     
@@ -285,7 +289,7 @@ static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_
     
     input_payload_len = input_ip_len - (ip_header_len + tcp_header_len);
     translated_payload_len = skb->len - (ip_header_len + tcp_header_len + sizeof(struct ethhdr));
-
+    
     // Translate seq_num
     result = translate_seq_num(skb, seq_num_map, input_seq_num, &flow, &translated_seq_num, ip_header_len);
     if (result != 1) {
