@@ -210,13 +210,9 @@ impl Daemon {
             Err(e) => return Err(format!("IP non valido '{}': {}", server.server_ip, e).into()),
         };
         
-        let expiration_timestamp = server.expiration_timestamp() as u64;
-        let duration = expiration_timestamp.saturating_sub(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-        );
+        // Usa direttamente duration_seconds dal config invece di calcolare
+        // basandosi su last_sent_at che potrebbe essere obsoleto
+        let duration = server.duration_seconds;
         
         let bpf_config = user::models::BpfConfig::new(
             padding_key.to_vec(),
