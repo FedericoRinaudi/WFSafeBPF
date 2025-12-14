@@ -11,28 +11,10 @@
 #include "client_config.h"
 
 
-static __always_inline __s8 is_dummy(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old) {
+static __always_inline __s8 is_dummy(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, struct client_config *config) {
     __wsum acc = 0;
     if(skb->len - tcp_payload_offset < HASH_LEN*2) {
         return 0;
-    }
-    
-    // Extract source IP address (ingress: packet from remote)
-    __u32 src_ip;
-    if (extract_src_ip(skb, &src_ip) < 0) {
-        return -1;
-    }
-    
-    // Extract server port (ingress context)
-    __u16 server_port;
-    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
-        return -1;
-    }
-    
-    // Get dummy config for this IP and port
-    struct client_config *config = get_dummy_key(src_ip, server_port);
-    if (!config) {
-        return -1;
     }
     
     return remove_hmac(skb, skb->len - (HASH_LEN*2), &acc, config->dummy_key);
@@ -68,20 +50,8 @@ static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb
         }
     }
 
-    // Extract destination IP address (egress: packet to remote)
-    __u32 dst_ip;
-    if (extract_dst_ip(skb, &dst_ip) < 0) {
-        return TC_ACT_SHOT;
-    }
-    
-    // Extract server port (egress context)
-    __u16 server_port;
-    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
-        return TC_ACT_SHOT;
-    }
-    
     // Get dummy config for this IP and port
-    struct client_config *config = get_dummy_key(dst_ip, server_port);
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
     if (!config) {
         return TC_ACT_SHOT;
     }
@@ -128,49 +98,22 @@ static __always_inline __u8 insert_dummy_packet_internal(struct __sk_buff *skb) 
                              + (__u32)tcp_header_len;
     __u16 payload_len = skb->len - tcp_payload_offset;
     
-    // Extract destination IP address (egress: packet to remote)
-    __u32 dst_ip;
-    if (extract_dst_ip(skb, &dst_ip) < 0) {
-        return -1;
+    if (payload_len < 32 || skb_mark_get_redirect_count(skb) > 8 ) {
+        debug_print("[DUMMY] Skip: payload troppo piccolo o troppi redirect (payload=%u bytes, redirects=%u)", payload_len, skb_mark_get_redirect_count(skb));
+        return 1; // No fragmentation for small payloads
     }
-    
-    // Extract server port (egress context)
-    __u16 server_port;
-    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
-        return -1;
-    }
-    
+
     // Get dummy config and probability for this IP and port
-    struct client_config *config = get_dummy_key(dst_ip, server_port);
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
     if (!config) {
         return -1;
     }
     
-    #if DEBUG == 0
-    if ((bpf_get_prandom_u32() % 100) > config->dummy_probability || payload_len < 32 || skb_mark_get_redirect_count(skb) > 8 ) {
+    if ((bpf_get_prandom_u32() % 100) > config->dummy_probability) {
+        debug_print("[DUMMY] Skip: controllo probabilità (payload=%u bytes)", payload_len);
         return 1; // No fragmentation for small payloads
     }
-    #else
-    __u8 skip_reason = 0; // 0=no skip, 1=small payload, 2=too many redirects, 3=probability
-    if (payload_len < 32) {
-        skip_reason = 1;
-    } else if (skb_mark_get_redirect_count(skb) > 8) {
-        skip_reason = 2;
-    } else if ((bpf_get_prandom_u32() % 100) > config->dummy_probability) {
-        skip_reason = 3;
-    }
-    
-    if (skip_reason > 0) {
-        if(skip_reason == 1) {
-            bpf_printk("[DUMMY] Skip: payload troppo piccolo (%u bytes < 32)", payload_len);
-        } else if(skip_reason == 2) {
-            bpf_printk("[DUMMY] Skip: troppi redirect (%u > 8)", skb_mark_get_redirect_count(skb));
-        } else if(skip_reason == 3) {
-            bpf_printk("[DUMMY] Skip: controllo probabilità (payload=%u bytes)", payload_len);
-        }
-        return 1; // No fragmentation for small payloads
-    }
-    #endif
+   
     // Calculate dummy packet size (minimum 64 bytes)
     u16 dummy_payload_len = (bpf_get_prandom_u32() % (MAX_PKT_SIZE - tcp_payload_offset - 64)) + 64; // size of the dummy payload
     debug_print("[DUMMY] Inserting dummy packet: dummy_payload=%u bytes", dummy_payload_len);

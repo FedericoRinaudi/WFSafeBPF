@@ -75,50 +75,23 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
                              + (__u32)tcp_header_len;
     __u16 payload_len = skb->len - tcp_payload_offset;
     
-    // Extract destination IP address (egress: packet to remote)
-    __u32 dst_ip;
-    if (extract_dst_ip(skb, &dst_ip) < 0) {
-        return -1;
+    if(payload_len < 64 || skb_mark_get_redirect_count(skb) > 8) {
+        debug_print("[FRAGMENT] Skip: payload too small (%u bytes) or too many redirects (%u)", payload_len, skb_mark_get_redirect_count(skb));
+        return 1; // No fragmentation for small payloads or too many redirects
     }
-    
-    // Extract server port (egress context)
-    __u16 server_port;
-    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
-        return -1;
-    }
-    
-    // Get fragmentation config and probability for this IP and port
-    struct client_config *config = get_fragmentation_probability(dst_ip, server_port);
+
+    // Get fragmentation probability for this IP and port
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
     if (!config) {
         return -1;
     }
     
     // Check if we should fragment
-    #if DEBUG == 0
-    if ((bpf_get_prandom_u32() % 100) > config->fragmentation_probability || payload_len < 64 || skb_mark_get_redirect_count(skb) > 8 ) {
+    if ((bpf_get_prandom_u32() % 100) > config->fragmentation_probability) {
+        debug_print("[FRAGMENT] Skip: probability check (payload=%u bytes)", payload_len);
         return 1; // No fragmentation for small payloads
-    }
-    #else
-    __u8 skip_reason = 0; // 0=no skip, 1=small payload, 2=too many redirects, 3=probability
-    if (payload_len < 64) {
-        skip_reason = 1;
-    } else if (skb_mark_get_redirect_count(skb) > 8) {
-        skip_reason = 2;
-    } else if ((bpf_get_prandom_u32() % 100) > config->fragmentation_probability) {
-        skip_reason = 3;
     }
     
-    if (skip_reason > 0) {
-        if(skip_reason == 1) {
-            bpf_printk("[FRAGMENT] Skip: payload troppo piccolo (%u bytes < 64)", payload_len);
-        } else if(skip_reason == 2) {
-            bpf_printk("[FRAGMENT] Skip: troppi redirect (%u > 8)", skb_mark_get_redirect_count(skb));
-        } else if(skip_reason == 3) {
-            bpf_printk("[FRAGMENT] Skip: controllo probabilità (payload=%u bytes)", payload_len);
-        }
-        return 1; // No fragmentation for small payloads
-    }
-    #endif
     // fino a qui
     // Calculate new fragment size (minimum 32 bytes)
     u16 frag_payload_len = (bpf_get_prandom_u32() % (payload_len - 32)) + 32; // size of the fragment payload
@@ -137,7 +110,7 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     }
 
     skb_mark_set_len(skb, 0);  // Clear frag payload, keep other fields
-    skb_mark_set_type(skb, SKB_MARK_TYPE_NONE);
+    skb_mark_set_type(skb, SKB_MARK_TYPE_FRAGMENTED);
     debug_print("[FRAGMENT] Packet resized to %u bytes", tcp_payload_offset + payload_len);
 
     __u16 read_start_offset = tcp_payload_offset + frag_payload_len;

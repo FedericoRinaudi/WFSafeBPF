@@ -29,53 +29,47 @@ struct {
     __uint(max_entries, 1024);
 } client_config_map SEC(".maps");
 
-/* Get padding key and probability for given IP address and server port */
-static __always_inline struct client_config* get_padding_key(__u32 ip_addr, __u16 server_port) {
+/* Get client configuration for given IP address and server port */
+static __always_inline struct client_config* get_client_config(__u32 ip_addr, __u16 server_port) {
     struct client_config_key key = {};
     key.ip_addr = ip_addr;
     key.server_port = server_port;
     struct client_config *config = bpf_map_lookup_elem(&client_config_map, &key);
     if (!config) {
-        debug_print("[CLIENT_CONFIG] No config found for IP:port (padding) for ip 0x%x:%u", ip_addr, server_port);
+        debug_print("[CLIENT_CONFIG] No config found for IP:port 0x%x:%u", ip_addr, server_port);
         return NULL;
     }
     return config;
 }
 
-/* Get dummy key and probability for given IP address and server port */
-static __always_inline struct client_config* get_dummy_key(__u32 ip_addr, __u16 server_port) {
-    struct client_config_key key = {};
-    key.ip_addr = ip_addr;
-    key.server_port = server_port;
-    struct client_config *config = bpf_map_lookup_elem(&client_config_map, &key);
-    if (!config) {
-        debug_print("[CLIENT_CONFIG] No config found for IP:port (dummy) for ip 0x%x:%u", ip_addr, server_port);
+/* Get client configuration for ingress packets (extracts src_ip and server port) */
+static __always_inline struct client_config* get_client_config_ingress(struct __sk_buff *skb, __u8 ip_header_len) {
+    __u32 src_ip;
+    if (extract_src_ip(skb, &src_ip) < 0) {
         return NULL;
     }
-    return config;
-}
-
-
-/* Check if IP address and server port have configuration */
-static __always_inline int has_client_config(__u32 ip_addr, __u16 server_port) {
-    struct client_config_key key = {};
-    key.ip_addr = ip_addr;
-    key.server_port = server_port;
-    struct client_config *config = bpf_map_lookup_elem(&client_config_map, &key);
-    return config != NULL;
-}
-
-/* Get fragmentation probability for given IP address and server port */
-static __always_inline struct client_config* get_fragmentation_probability(__u32 ip_addr, __u16 server_port) {
-    struct client_config_key key = {};
-    key.ip_addr = ip_addr;
-    key.server_port = server_port;
-    struct client_config *config = bpf_map_lookup_elem(&client_config_map, &key);
-    if (!config) {
-        debug_print("[CLIENT_CONFIG] No config found for IP:port (fragmentation) for ip 0x%x:%u", ip_addr, server_port);
+    
+    __u16 server_port;
+    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
         return NULL;
     }
-    return config;
+    
+    return get_client_config(src_ip, server_port);
+}
+
+/* Get client configuration for egress packets (extracts dst_ip and server port) */
+static __always_inline struct client_config* get_client_config_egress(struct __sk_buff *skb, __u8 ip_header_len) {
+    __u32 dst_ip;
+    if (extract_dst_ip(skb, &dst_ip) < 0) {
+        return NULL;
+    }
+    
+    __u16 server_port;
+    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
+        return NULL;
+    }
+    
+    return get_client_config(dst_ip, server_port);
 }
 
 #endif // __CLIENT_CONFIG_H

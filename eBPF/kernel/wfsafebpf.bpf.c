@@ -157,7 +157,7 @@ int handle_ingress(struct __sk_buff *skb) {
     __u16 ip_tot_old;
     __u8 ip_header_len, tcp_header_len;
     __wsum acc = 0;
-    __u32 seq_num_old;
+    //__u32 seq_num_old;
     
     debug_print("[INGRESS] START: len=%u", skb->len);
     
@@ -171,17 +171,8 @@ int handle_ingress(struct __sk_buff *skb) {
         return result;
     }
     
-    // Check if source IP has keys configured
-    __u32 src_ip;
-    __u16 server_port;
-    if (extract_src_ip(skb, &src_ip) < 0) {
-        return TC_ACT_OK;
-    }
-    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
-        return TC_ACT_OK;
-    }
-    
-    if (!has_client_config(src_ip, server_port)) {
+    struct client_config *config = get_client_config_ingress(skb, ip_header_len);
+    if (!config) {
         debug_print("[INGRESS-EXIT] No config for source IP, passing through");
         return TC_ACT_OK;
     }
@@ -192,12 +183,12 @@ int handle_ingress(struct __sk_buff *skb) {
     }
     skb_mark_reset(skb);  // Reset all mark fields
 
-    result = extract_seq_num(skb, ip_header_len, &seq_num_old);
-    if (result != 1) {
-        debug_print("[INGRESS-EXIT] extract_seq_num: result=%d", result);
-        return result;
-    }
-    __s8 dummy = is_dummy(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old);
+    //result = extract_seq_num(skb, ip_header_len, &seq_num_old);
+    //if (result != 1) {
+    //    debug_print("[INGRESS-EXIT] extract_seq_num: result=%d", result);
+    //    return result;
+    //}
+    __s8 dummy = is_dummy(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, config);
     if (dummy < 0) {
         debug_print("[INGRESS-EXIT] is_dummy: error");
         return TC_ACT_SHOT;
@@ -211,7 +202,7 @@ int handle_ingress(struct __sk_buff *skb) {
         debug_print("[INGRESS] Detected dummy packet, dropping");
         return TC_ACT_SHOT;
     }
-    if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, &acc) < 0) {
+    if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, &acc, config) < 0) {
         debug_print("[INGRESS-EXIT] remove_all_padding: TC_ACT_SHOT");
         return TC_ACT_SHOT;
     }
@@ -239,25 +230,13 @@ int handle_egress(struct __sk_buff *skb) {
         return TC_ACT_OK;
     }
     
-    // Check if destination IP has keys configured
-    __u32 dst_ip;
-    if (extract_dst_ip(skb, &dst_ip) < 0) {
-        return TC_ACT_OK;
-    }
     __u8 ip_header_len;
     if(extract_ip_header_len(skb, &ip_header_len) != 1) {
         return TC_ACT_OK;
     }
-    __u16 server_port;
-    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
-        return TC_ACT_OK;
-    }
-    // Debug: create key and dump raw bytes
-    struct client_config_key lookup_key = {};
-    lookup_key.ip_addr = dst_ip;
-    lookup_key.server_port = server_port;
     
-    if (!has_client_config(dst_ip, server_port)) {
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
+    if (!config) {
         debug_print("[EGRESS] No config for destination IP, passing through");
         return TC_ACT_OK;
     }
