@@ -112,7 +112,7 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
     if(bytes_remaining > 0) {
         __builtin_memset(buffer, 0, FRAG_BUFF_MAX_SIZE);
         /* Help the verifier understand the bounds */
-        bytes_remaining &= 0xFF;
+        bytes_remaining &= 0xFFF;
         if(bytes_remaining > FRAG_BUFF_MAX_SIZE || bytes_remaining == 0) {
             debug_print("[RECOMPUTE_CSUM] ERROR: Invalid bytes_remaining=%u after padding", bytes_remaining);
             return TC_ACT_SHOT;
