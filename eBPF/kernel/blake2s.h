@@ -1,6 +1,8 @@
 #ifndef __BLAKE2S_H
 #define __BLAKE2S_H
 
+#include "measure_config.h"
+
 #define BLAKE2S_DIGEST_SIZE 32
 #define BLAKE2S_KEY_SIZE 32
 #define BLAKE2S_BLOCK_SIZE 64
@@ -91,6 +93,7 @@ static __always_inline void blake2s_compress(__u32 *m, __u32 *h, __u32 *v)
 
 static __always_inline void blake2sCompute(const __u8 *key, const __u8 *data, __u32 *digest)
 {
+   blake2s_delay_start_measure();
    __u32 v[16];
    __u32 m[16];
    digest[0] = 0x6B08C647;
@@ -122,6 +125,7 @@ static __always_inline void blake2sCompute(const __u8 *key, const __u8 *data, __
        digest[i] = __builtin_bswap32(digest[i]);
    }
    #endif
+   blake2s_delay_end_measure();
 }
  
 

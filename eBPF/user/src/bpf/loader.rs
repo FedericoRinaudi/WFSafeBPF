@@ -50,6 +50,23 @@ impl BpfLoader {
         Ok(BpfLoader { skel, ifindex })
     }
     
+    /// Ottieni un riferimento allo skeleton eBPF
+    pub fn skel(&self) -> &WfsafebpfSkel<'static> {
+        &self.skel
+    }
+    
+    /// Ottieni mappe per ringbuffer measurements
+    /// Ritorna un vettore di tuple (nome, riferimento_mappa) per le mappe richieste
+    pub fn get_measurement_maps<'a>(&'a self, map_names: &[&'a str]) -> Vec<(&'a str, libbpf_rs::Map<'a>)> {
+        let mut result = Vec::new();
+        for name in map_names {
+            if let Some(map) = self.skel.object().maps().find(|m| m.name() == *name) {
+                result.push((*name, map));
+            }
+        }
+        result
+    }
+    
     /// Ottiene un manager per gestire le operazioni sulle mappe eBPF
     pub fn maps(&mut self) -> BpfMapManager<'_> {
         // Convert from skeleton to the underlying libbpf_rs::Object

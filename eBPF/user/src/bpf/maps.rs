@@ -25,6 +25,11 @@ impl<'a> BpfMapManager<'a> {
             .ok_or_else(|| format!("Mappa '{}' non trovata", name))
     }
     
+    /// Ottiene una mappa per nome (pubblico, per uso con ringbuffer)
+    pub fn get_map_by_name(&self, name: &str) -> Result<libbpf_rs::Map<'_>, String> {
+        self.get_map(name)
+    }
+    
     /// Ottiene una mappa mutabile per nome
     fn get_map_mut(&mut self, name: &str) -> Result<libbpf_rs::MapMut<'_>, String> {
         self.object

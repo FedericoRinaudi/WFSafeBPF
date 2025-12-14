@@ -106,6 +106,36 @@ pub struct ClientConfig {
     
     /// Lista dei server configurati
     pub servers: Vec<ServerConfig>,
+    
+    /// Configurazione esperimenti di performance (opzionale)
+    #[serde(default)]
+    pub experiment: Option<ExperimentConfig>,
+}
+
+/// Configurazione per gli esperimenti di performance
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExperimentConfig {
+    /// Tipo di esperimento da eseguire
+    pub experiment_type: String,
+    
+    /// Nome dell'esperimento/run (per identificare i file CSV)
+    pub run_name: String,
+    
+    /// Directory dove salvare i risultati CSV
+    #[serde(default = "default_results_dir")]
+    pub results_dir: String,
+    
+    /// Intervallo di salvataggio in secondi
+    #[serde(default = "default_save_interval")]
+    pub save_interval_seconds: u64,
+}
+
+fn default_results_dir() -> String {
+    "./results".to_string()
+}
+
+fn default_save_interval() -> u64 {
+    5 // Salva ogni 5 secondi
 }
 
 fn default_check_interval() -> u64 {

@@ -14,6 +14,7 @@
 #include "fragmentation.h"
 #include "seq_num_translation.h"
 #include "dummy.h"
+#include "measure_config.h"
 
 // Enum for tail call program indices
 enum tail_call_index {
@@ -138,15 +139,41 @@ int manage_tcp_state_translations(struct __sk_buff *skb){
     if (skb_mark_get_checksum_flag(skb)) {
         bpf_tail_call(skb, &progs_eg, TAIL_CALL_RECOMPUTE_CHECKSUM);
     }
-
+    delay_egress_stop_measure();
+    __u8 ip_header_len;
+    if(extract_ip_header_len(skb, &ip_header_len) != 1) {
+        return result;
+    }
+    __u8 tcp_flags;
+    if(extract_tcp_flags(skb, ip_header_len, &tcp_flags) != 1) { // Dummy call to ensure ip_header_len is used
+        return result;
+    }
+    if(!is_syn(tcp_flags) && !is_fin(tcp_flags) && skb->len>64) {
+        delay_egress_end_measure();
+    }
     debug_print("[EGRESS] END: len=%u", skb->len);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int recompute_tcp_checksum(struct __sk_buff *skb) {
+    checksum_delay_egress_start_measure();
     __u8 result = recompute_tcp_checksum_internal(skb);
+    checksum_delay_egress_end_measure();
     debug_print("[EGRESS] END: len=%u", skb->len);
+    delay_egress_stop_measure();
+    __u8 ip_header_len;
+    __u8 type = skb_mark_get_type(skb);
+    if(extract_ip_header_len(skb, &ip_header_len) != 1) {
+        return result;
+    }
+    __u8 tcp_flags;
+    if(extract_tcp_flags(skb, ip_header_len, &tcp_flags) != 1) { // Dummy call to ensure ip_header_len is used
+        return result;
+    }
+    if(!is_syn(tcp_flags) && !is_fin(tcp_flags) && skb->len>64 && type != SKB_MARK_TYPE_FRAGMENT_CLONE && type != SKB_MARK_TYPE_DUMMY_CLONE) {
+        delay_egress_end_measure();
+    }
     return result;
 }
 
@@ -157,7 +184,7 @@ int handle_ingress(struct __sk_buff *skb) {
     __u16 ip_tot_old;
     __u8 ip_header_len, tcp_header_len;
     __wsum acc = 0;
-    __u32 seq_num_old;
+    //__u32 seq_num_old;
     
     debug_print("[INGRESS] START: len=%u", skb->len);
     
@@ -170,34 +197,47 @@ int handle_ingress(struct __sk_buff *skb) {
         debug_print("[INGRESS-EXIT] extract_tcp_ip_header_lengths: result=%d", result);
         return result;
     }
-    
-    // Check if source IP has keys configured
-    __u32 src_ip;
-    __u16 server_port;
-    if (extract_src_ip(skb, &src_ip) < 0) {
-        return TC_ACT_OK;
+
+    __u8 tcp_flags;
+    if(extract_tcp_flags(skb, ip_header_len, &tcp_flags) != 1) {
+        debug_print("[INGRESS-EXIT] extract_tcp_flags: result=%d", result);
+        return result;
     }
-    if (extract_server_port_ingress(skb, ip_header_len, &server_port) < 0) {
-        return TC_ACT_OK;
+    if(is_syn(tcp_flags)){
+        delay_ingress_start_measure();
+        delay_ingress_stop_measure();
+    } else if (is_fin(tcp_flags)){
+        delay_ingress_end_measure();
+    } else if (skb->len>64){
+        delay_ingress_resume_measure();
     }
     
-    if (!has_client_config(src_ip, server_port)) {
+    // Check if source IP has keys configured and get config once
+    struct client_config *config = get_client_config_ingress(skb, ip_header_len);
+    if (!config) {
         debug_print("[INGRESS-EXIT] No config for source IP, passing through");
+        delay_ingress_reset_measure();
         return TC_ACT_OK;
+    }
+    if(!is_syn(tcp_flags) && !is_fin(tcp_flags) && skb->len>64) {
+        seq_num_trans_delay_ingress_start_measure();
     }
     result = seq_num_translation_init_ingress(skb);
     if (result != 1) {
         debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
         return result;
     }
+    if(!is_syn(tcp_flags) && !is_fin(tcp_flags) && skb->len>64) {
+        seq_num_trans_delay_ingress_stop_measure();
+    }
     skb_mark_reset(skb);  // Reset all mark fields
 
-    result = extract_seq_num(skb, ip_header_len, &seq_num_old);
-    if (result != 1) {
-        debug_print("[INGRESS-EXIT] extract_seq_num: result=%d", result);
-        return result;
-    }
-    __s8 dummy = is_dummy(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old);
+    //result = extract_seq_num(skb, ip_header_len, &seq_num_old);
+    //if (result != 1) {
+    //    debug_print("[INGRESS-EXIT] extract_seq_num: result=%d", result);
+    //    return result;
+    //}
+    __s8 dummy = is_dummy(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, config);
     if (dummy < 0) {
         debug_print("[INGRESS-EXIT] is_dummy: error");
         return TC_ACT_SHOT;
@@ -209,21 +249,32 @@ int handle_ingress(struct __sk_buff *skb) {
             return result;
         }
         debug_print("[INGRESS] Detected dummy packet, dropping");
+        delay_ingress_stop_measure();
         return TC_ACT_SHOT;
     }
-    if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, &acc) < 0) {
+    if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, &acc, config) < 0) {
         debug_print("[INGRESS-EXIT] remove_all_padding: TC_ACT_SHOT");
         return TC_ACT_SHOT;
     }
+
+    seq_num_trans_delay_ingress_resume_measure();
     result = manage_seq_num_ingress(skb);
+    seq_num_trans_delay_ingress_end_measure();
     if (result != 1) {
         debug_print("[INGRESS-EXIT] manage_seq_num_ingress: result=%d", result);
         return result;
     }
 
+    
+    checksum_delay_ingress_start_measure();
     if (update_checksums_inc(skb, ip_header_len, ip_tot_old, acc) < 0) {
         debug_print("[INGRESS-EXIT] update_checksums_inc: error");
         return -1;
+    }
+    checksum_delay_ingress_end_measure();
+
+    if(!is_syn(tcp_flags) && !is_fin(tcp_flags) && skb->len>64) {
+        delay_ingress_stop_measure();
     }
 
     debug_print("[INGRESS] END: len=%u", skb->len);
@@ -234,37 +285,32 @@ int handle_ingress(struct __sk_buff *skb) {
 SEC("classifier")
 int handle_egress(struct __sk_buff *skb) {
     debug_print("[EGRESS] START: len=%u", skb->len);
-    
+    __u8 mark_type = skb_mark_get_type(skb);
+    __u8 tcp_flags;
     if (should_skip_packet(skb)) {
         return TC_ACT_OK;
     }
     
-    // Check if destination IP has keys configured
-    __u32 dst_ip;
-    if (extract_dst_ip(skb, &dst_ip) < 0) {
-        return TC_ACT_OK;
-    }
     __u8 ip_header_len;
     if(extract_ip_header_len(skb, &ip_header_len) != 1) {
         return TC_ACT_OK;
     }
-    __u16 server_port;
-    if (extract_server_port_egress(skb, ip_header_len, &server_port) < 0) {
+    if(extract_tcp_flags(skb, ip_header_len, &tcp_flags) != 1) {
         return TC_ACT_OK;
     }
-    // Debug: create key and dump raw bytes
-    struct client_config_key lookup_key = {};
-    lookup_key.ip_addr = dst_ip;
-    lookup_key.server_port = server_port;
-    
-    if (!has_client_config(dst_ip, server_port)) {
+    if(!is_syn(tcp_flags) && !is_fin(tcp_flags) && skb->len>64 && mark_type != SKB_MARK_TYPE_FRAGMENT_CLONE && mark_type != SKB_MARK_TYPE_DUMMY_CLONE) {
+        delay_egress_start_measure();
+    }
+
+    // Check if destination IP has keys configured
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
+    if (!config) {
+        delay_egress_reset_measure();
         debug_print("[EGRESS] No config for destination IP, passing through");
         return TC_ACT_OK;
     }
     
-    __u8 result = skb_mark_get_type(skb);
-    
-    switch(result) {
+    switch(mark_type) {
         case SKB_MARK_TYPE_FRAGMENT_CLONE:
             bpf_tail_call(skb, &progs_eg, TAIL_CALL_FRAG_CLONE);
             break;

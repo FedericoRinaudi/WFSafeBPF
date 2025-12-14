@@ -1,5 +1,5 @@
-# Configurazione del client WFSafe
-# Questo file viene letto periodicamente dal daemon
+# Configurazione del client WFSafe con esperimento di performance
+# Questo file mostra come configurare un esperimento
 
 # Interfaccia di rete su cui caricare il programma eBPF
 interface: enp0s9
@@ -8,10 +8,25 @@ interface: enp0s9
 check_interval_seconds: 120
 
 # Parametri per la pulizia delle mappe di traduzione
-translation_cleanup_interval_seconds: 5  # Intervallo di cleanup (default: 5)
+translation_cleanup_interval_seconds: 10  # Intervallo di cleanup (default: 5)
 cpu_threshold: 5.0                       # Soglia CPU per cleanup aggressivo (default: 5.0)
-timestamp_threshold_seconds: 60          # Entry più vecchie di questo valore vengono eliminate (default: 60)
-force_cleanup_every: 20                  # Cleanup forzato ogni N iterazioni (default: 20)
+timestamp_threshold_seconds: 600          # Entry più vecchie di questo valore vengono eliminate (default: 60)
+force_cleanup_every: 200                  # Cleanup forzato ogni N iterazioni (default: 20)
+
+# Configurazione esperimento (opzionale - rimuovere o commentare per disabilitare)
+experiment:
+  # Tipo di esperimento: delay, delay_checksum, delay_seq_num_trans, delay_blake2s, 
+  #                       delay_map_lookup, delay_map_update, added_bytes
+  experiment_type: "delay"
+  
+  # Nome dell'esperimento/run (usato nei nomi dei file CSV)
+  run_name: "test_run_1"
+  
+  # Directory dove salvare i risultati CSV
+  results_dir: "$HOME/WFSafeBPF/results"
+  
+  # Intervallo di salvataggio in secondi (default: 5)
+  save_interval_seconds: 5
 
 # Lista dei server configurati
 servers:
@@ -23,7 +38,6 @@ servers:
     endpoint: /config
     
     # Timestamp dell'ultimo invio delle chiavi al server (ISO 8601)
-    # Le chiavi vengono generate al volo e non salvate
     last_sent_at: 2024-01-01T00:00:00Z
     
     # Durata delle chiavi in secondi
@@ -33,4 +47,3 @@ servers:
     padding_probability: 70
     dummy_probability: 70
     fragmentation_probability: 70
-

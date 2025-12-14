@@ -11,12 +11,16 @@
 #define TC_ACT_REDIRECT 7
 
 /* Skb mark types */
-#define SKB_MARK_TYPE_NONE 0
-#define SKB_MARK_TYPE_FRAGMENT_CLONE 1
-#define SKB_MARK_TYPE_DUMMY_CLONE 2
-#define SKB_MARK_TYPE_CLONED_FOR_DUMMY 3
-#define SKB_MARK_TYPE_DUMMY 4
+enum skb_mark_type {
+    SKB_MARK_TYPE_NONE = 0,
+    SKB_MARK_TYPE_FRAGMENT_CLONE = 1,
+    SKB_MARK_TYPE_FRAGMENTED = 2,
+    SKB_MARK_TYPE_DUMMY_CLONE = 3,
+    SKB_MARK_TYPE_CLONED_FOR_DUMMY = 4,
+    SKB_MARK_TYPE_DUMMY = 5,
+};
 /* BLAKE2s authentication tag size */
+
 #define HASH_LEN 32
 
 #endif

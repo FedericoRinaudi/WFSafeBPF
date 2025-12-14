@@ -11,6 +11,11 @@ default_padding_probability = 30
 default_dummy_probability = 30
 default_fragmentation_probability = 30
 
+# Configurazione esperimenti di performance (opzionale)
+experiment_type = "delay"
+experiment_run_name = "test_run_1"
+experiment_results_dir = "$HOME/WFSafeBPF/results"
+
 # Configurazione TLS
 [default.tls]
 certs = "/path/to/cert.pem"

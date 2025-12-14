@@ -88,10 +88,12 @@ static __always_inline __u8 init_translation_map(void* map, struct flow_info *fl
     value.prev_seq = 0;
     value.timestamp_ns = bpf_ktime_get_ns();
     value.is_fin_ack = 0;
+    map_update_delay_start_measure();
     if (bpf_map_update_elem(map, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to initialize translation map");
         return TC_ACT_SHOT;
     }
+    map_update_delay_end_measure();
 
     return 1;
 }
@@ -104,7 +106,10 @@ static __always_inline struct map_value * lookup_translation_map(void *map, stru
     struct map_key key;
     key.flow = *flow;
     key.seq = seq_num;
-    return bpf_map_lookup_elem(map, &key);
+    map_lookup_delay_start_measure();
+    struct map_value* result = bpf_map_lookup_elem(map, &key);
+    map_lookup_delay_end_measure();
+    return result;
 }
 
 static __always_inline __u8 seq_num_map_translation_init(struct __sk_buff *skb, void* seq_num_map, void* ack_map, __u64 redirect_flags) { // da chiamare sia in ingress che in egress
@@ -199,8 +204,9 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
 
     // Controlla se esiste già un'entry per questa chiave (seq_num)
     // Se sì, preserva la catena usando il prev_seq dell'entry esistente
+    map_lookup_delay_reset_measure();
     struct map_value *existing_seq = bpf_map_lookup_elem(seq_num_map, &key);
-    
+    map_lookup_delay_end_measure();    
     struct map_value value;
     value.translated_seq = translated_seq + translated_payload_len;
     value.timestamp_ns = bpf_ktime_get_ns();
@@ -214,10 +220,12 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
         value.prev_seq = input_seq_num;
     }
 
+    map_update_delay_start_measure();
     if (bpf_map_update_elem(seq_num_map, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to insert new seq_num");
         return TC_ACT_SHOT;
     }
+    map_update_delay_end_measure();
 
     reverse_flow(&(key.flow));
     key.seq = translated_seq + translated_payload_len;
@@ -227,10 +235,12 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
     value.is_fin_ack = is_fin;  // Marca l'ACK come FIN-ACK se questo è un FIN
     value.prev_seq = 0;  // Non serve più la chain per gli ACK
 
+    map_update_delay_start_measure();
     if (bpf_map_update_elem(ack_map_reverse, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to insert new ack_num");
         return TC_ACT_SHOT;
     }
+    map_update_delay_end_measure();
 
     return 1;
 }

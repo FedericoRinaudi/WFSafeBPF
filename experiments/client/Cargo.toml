@@ -1,0 +1,14 @@
+[package]
+name = "experiment-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+# Configurazione del client
+# Modifica questi valori e ricompila per cambiare la configurazione
+[package.metadata.config]
+server_address = "127.0.0.1:8080"
+bytes_to_send = "1024"
+bytes_to_receive = "2048"
+n_requests = "100"
