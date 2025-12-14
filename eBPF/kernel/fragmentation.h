@@ -110,7 +110,6 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
     }
 
     skb_mark_set_len(skb, 0);  // Clear frag payload, keep other fields
-    skb_mark_set_type(skb, SKB_MARK_TYPE_FRAGMENTED);
     debug_print("[FRAGMENT] Packet resized to %u bytes", tcp_payload_offset + payload_len);
 
     __u16 read_start_offset = tcp_payload_offset + frag_payload_len;
