@@ -149,16 +149,17 @@ static __always_inline __u8 seq_num_map_translation_init(struct __sk_buff *skb, 
     if(lookup_translation_map(seq_num_map, &flow, seq_num)!=NULL){
         return 1;
     }
+    debug_print("[TCP_STATE_INIT-EXIT] No SYN and no translation found: seq=%u, flags=%u", seq_num, flag);
     
     // Use redirect_count field to track retries and avoid infinite loops
-    __u8 retry_count = skb_mark_get_redirect_count(skb);
-    if(retry_count > 8){
-        debug_print("[TCP_STATE_INIT-EXIT] Too many redirects: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
-        return TC_ACT_SHOT;
-    }
-    debug_print("[TCP_STATE_INIT-EXIT] Missing translation, redirecting: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
-    skb_mark_increment_redirect_count(skb);
-    bpf_clone_redirect(skb, skb->ifindex, redirect_flags);
+    //__u8 retry_count = skb_mark_get_redirect_count(skb);
+    //if(retry_count > 8){
+    //    debug_print("[TCP_STATE_INIT-EXIT] Too many redirects: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
+    //    return TC_ACT_SHOT;
+    //}
+    //debug_print("[TCP_STATE_INIT-EXIT] Missing translation, redirecting: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
+    //skb_mark_increment_redirect_count(skb);
+    //bpf_clone_redirect(skb, skb->ifindex, redirect_flags);
     return TC_ACT_SHOT;
 }
 
@@ -177,6 +178,7 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
     }
 
     *output_seq_num = translation->translated_seq;
+    debug_print("[SEQ_TRANS] Translating seq_num: %u -> %u", input_seq_num, *output_seq_num);
 
     int result = replace_seq_num(skb, ip_header_len, *output_seq_num);
     if (result != 1) {
@@ -218,6 +220,7 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
         debug_print("[SEQ_TRANS] Failed to insert new seq_num");
         return TC_ACT_SHOT;
     }
+    debug_print("[SEQ_TRANS] Inserted new seq: key=%u -> translated=%u (input_len=%u, trans_len=%u)", key.seq, value.translated_seq, input_payload_len, translated_payload_len);
 
     reverse_flow(&(key.flow));
     key.seq = translated_seq + translated_payload_len;
@@ -231,6 +234,7 @@ static __always_inline __u8 insert_new_seq(void* seq_num_map, void* ack_map_reve
         debug_print("[SEQ_TRANS] Failed to insert new ack_num");
         return TC_ACT_SHOT;
     }
+    debug_print("[SEQ_TRANS] Inserted new ack: key=%u -> translated=%u (is_fin=%u)", key.seq, value.translated_seq, is_fin);
 
     return 1;
 }
@@ -241,6 +245,7 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         debug_print("[SEQ_TRANS] No translation found for ack_num=%u", input_ack_num);
         return TC_ACT_SHOT;
     }
+    debug_print("[SEQ_TRANS] Translating ack_num: %u -> %u", input_ack_num, translation->translated_seq);
    // Replace ack_num in packet
     if (replace_ack_num(skb, ip_header_len, translation->translated_seq) < 0) {
         debug_print("[SEQ_TRANS] Failed to replace ack_num");

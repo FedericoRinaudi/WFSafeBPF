@@ -13,18 +13,27 @@
 #include "client_config.h"
 
 /* Remove all padding HMACs from packet */
-static __always_inline __s8 remove_all_padding(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, __wsum *acc, struct client_config *config) {
-    __u8 i;
+static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
+    __u8 i, ip_header_len, tcp_header_len, tcp_payload_offset, result;
+    result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
+    if(result != 1)
+        return result;
+    tcp_payload_offset = sizeof(struct ethhdr)
+                             + ip_header_len
+                             + tcp_header_len;;
     __s8 remove_result;
     
-    __u8 *secret_key = config->padding_key;
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
+    if (!config) {
+        return -1;
+    }
 
     for (i = 0; i < MAX_PADDING_UNITS; i++) {
         __s32 message_start_pos = skb->len - (32 * (i + 2));
         if (message_start_pos < tcp_payload_offset) {
             break;
         }
-        remove_result = remove_hmac(skb, message_start_pos, acc, secret_key);
+        remove_result = remove_hmac(skb, message_start_pos, config->padding_key);
         
         if (remove_result < 0) {
             debug_print("[INGRESS] Error in remove_hmac, dropping packet");

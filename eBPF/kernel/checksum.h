@@ -24,31 +24,6 @@ static __always_inline __s8 update_ip_len_and_csum(struct __sk_buff *skb, __u8 i
     return 0;
 }
 
-/* Update IP and TCP checksums after packet length change */
-static __always_inline __s8 update_checksums_inc(struct __sk_buff *skb, __u8 ip_header_len, __u16 old_ip_len, __wsum acc)
-{
-    __u16 new_ip_len = skb->len - ETH_HLEN;
-
-    if (update_ip_len_and_csum(skb, ip_header_len, old_ip_len, new_ip_len) < 0)
-        return -1;
-
-    __u16 old_tcp_len = old_ip_len - ip_header_len;
-    __u16 new_tcp_len = new_ip_len - ip_header_len;
-    __be16 old_tcp_len_be = bpf_htons(old_tcp_len);
-    __be16 new_tcp_len_be = bpf_htons(new_tcp_len);
-
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
-                           old_tcp_len_be, new_tcp_len_be,
-                           BPF_F_PSEUDO_HDR | sizeof(__u16)) < 0)
-        return -1;
-    
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
-                           0, acc, 0) < 0)
-        return -1;
-    
-    return 0;
-}
-
 static __always_inline __s8 update_checksums_seq_num(struct __sk_buff *skb, __u8 ip_header_len, __u32 old_seq_num, __u32 new_seq_num) {
     __be32 old_seq_num_be = bpf_htonl(old_seq_num);
     __be32 new_seq_num_be = bpf_htonl(new_seq_num);

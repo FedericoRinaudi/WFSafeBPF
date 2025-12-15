@@ -28,7 +28,7 @@ static __always_inline __s8 add_hmac(struct __sk_buff *skb, __u8 *secret_key) {
 }
 
 /* Remove and verify keyed BLAKE2s authentication tag */
-static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u32 message_start_pos, __wsum *acc, __u8 *secret_key) {
+static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u32 message_start_pos, __u8 *secret_key) {
     __u8 message[32];
     __u8 received_tag[32];
     __u32 calculated_digest[8];
@@ -49,11 +49,6 @@ static __always_inline __s8 remove_hmac(struct __sk_buff *skb, __u32 message_sta
         //debug_print("[REMOVE_HMAC] HMAC verification failed - invalid tag");
         return 0;
     }
-
-    __s64 t = bpf_csum_diff(calculated_digest, HASH_LEN, NULL, 0, *acc);
-    if (t < 0)
-        return -1;
-    *acc = (__wsum)t;
     
     return 1;
 }

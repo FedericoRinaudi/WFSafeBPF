@@ -75,7 +75,7 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
                              + (__u32)tcp_header_len;
     __u16 payload_len = skb->len - tcp_payload_offset;
     
-    if(payload_len < 64 || skb_mark_get_redirect_count(skb) > 8) {
+    if(payload_len < 64 || skb_mark_get_redirect_count(skb) > 3) {
         debug_print("[FRAGMENT] Skip: payload too small (%u bytes) or too many redirects (%u)", payload_len, skb_mark_get_redirect_count(skb));
         return 1; // No fragmentation for small payloads or too many redirects
     }

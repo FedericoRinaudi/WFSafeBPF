@@ -15,45 +15,75 @@
 #include "seq_num_translation.h"
 #include "dummy.h"
 
-// Enum for tail call program indices
-enum tail_call_index {
-    TAIL_CALL_FRAG_CLONE = 0,
-    TAIL_CALL_TCP_DUMMY_CLONE = 1,
-    TAIL_CALL_TCP_STATE_INIT = 2,
-    TAIL_CALL_FRAGMENT_PACKET = 3,
-    TAIL_CALL_INSERT_DUMMY = 4,
-    TAIL_CALL_ADD_PADDING = 5,
-    TAIL_CALL_MANAGE_TCP_STATE = 6,
-    TAIL_CALL_RECOMPUTE_CHECKSUM = 7,
-    TAIL_CALL_MAX_ENTRIES = 8
+
+enum tail_call_index_eg {
+    TAIL_CALL_FRAG_CLONE,
+    TAIL_CALL_TCP_DUMMY_CLONE,
+    TAIL_CALL_TCP_STATE_INIT_EG,
+    TAIL_CALL_FRAGMENT_PACKET,
+    TAIL_CALL_INSERT_DUMMY,
+    TAIL_CALL_ADD_PADDING,
+    TAIL_CALL_MANAGE_TCP_STATE_EG,
+    TAIL_CALL_RECOMPUTE_CHECKSUM_EG,
+    TAIL_CALL_EGRESS_NUM_ENTRIES
+};
+
+enum tail_call_index_in {
+    TAIL_CALL_TCP_STATE_INIT_IN,
+    TAIL_CALL_DISCARG_DUMMY,
+    TAIL_CALL_REMOVE_PADDING,
+    TAIL_CALL_MANAGE_TCP_STATE_IN,
+    TAIL_CALL_RECOMPUTE_CHECKSUM_IN,
+    TAIL_CALL_INGRESS_NUM_ENTRIES
 };
 
 // Forward declarations for tail call map
 SEC("classifier") int fragmentation_clone_to_packet(struct __sk_buff *skb);
 SEC("classifier") int dummy_clone_to_packet(struct __sk_buff *skb);
-SEC("classifier") int tcp_state_init(struct __sk_buff *skb);
+SEC("classifier") int tcp_state_init_eg(struct __sk_buff *skb);
+SEC("classifier") int tcp_state_init_in(struct __sk_buff *skb);
 SEC("classifier") int fragment_packet(struct __sk_buff *skb);
 SEC("classifier") int insert_dummy_packet(struct __sk_buff *skb);
+SEC("classifier") int remove_dummy_packet(struct __sk_buff *skb);
+SEC("classifier") int remove_padding(struct __sk_buff *skb);
 SEC("classifier") int add_padding(struct __sk_buff *skb);
-SEC("classifier") int manage_tcp_state_translations(struct __sk_buff *skb);
+SEC("classifier") int manage_tcp_state_translations_eg(struct __sk_buff *skb);
+SEC("classifier") int manage_tcp_state_translations_in(struct __sk_buff *skb);
 SEC("classifier") int recompute_tcp_checksum(struct __sk_buff *skb);
 
 // Tail call program array map
 struct {
      __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
      __uint(key_size, sizeof(u32));
-     __uint(max_entries, TAIL_CALL_MAX_ENTRIES);
+     __uint(max_entries, TAIL_CALL_EGRESS_NUM_ENTRIES);
      __array(values, u32 (void *));
  } progs_eg SEC(".maps") = {
      .values = {
          [TAIL_CALL_FRAG_CLONE] = (void *)&fragmentation_clone_to_packet,
          [TAIL_CALL_TCP_DUMMY_CLONE] = (void *)&dummy_clone_to_packet,
-         [TAIL_CALL_TCP_STATE_INIT] = (void *)&tcp_state_init,
+         [TAIL_CALL_TCP_STATE_INIT_EG] = (void *)&tcp_state_init_eg,
          [TAIL_CALL_FRAGMENT_PACKET] = (void *)&fragment_packet,
          [TAIL_CALL_INSERT_DUMMY] = (void *)&insert_dummy_packet,
          [TAIL_CALL_ADD_PADDING] = (void *)&add_padding,
-         [TAIL_CALL_MANAGE_TCP_STATE] = (void *)&manage_tcp_state_translations,
-         [TAIL_CALL_RECOMPUTE_CHECKSUM] = (void *)&recompute_tcp_checksum
+         [TAIL_CALL_MANAGE_TCP_STATE_EG] = (void *)&manage_tcp_state_translations_eg,
+         [TAIL_CALL_RECOMPUTE_CHECKSUM_EG] = (void *)&recompute_tcp_checksum
+    },
+ };
+
+
+// Tail call program array map
+struct {
+     __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+     __uint(key_size, sizeof(u32));
+     __uint(max_entries, TAIL_CALL_INGRESS_NUM_ENTRIES);
+     __array(values, u32 (void *));
+ } progs_in SEC(".maps") = {
+     .values = {
+         [TAIL_CALL_TCP_STATE_INIT_IN] = (void *)&tcp_state_init_in,
+         [TAIL_CALL_DISCARG_DUMMY] = (void *)&remove_dummy_packet,
+         [TAIL_CALL_REMOVE_PADDING] = (void *)&remove_padding,
+         [TAIL_CALL_MANAGE_TCP_STATE_IN] = (void *)&manage_tcp_state_translations_in,
+         [TAIL_CALL_RECOMPUTE_CHECKSUM_IN] = (void *)&recompute_tcp_checksum
     },
  };
 
@@ -66,7 +96,7 @@ int fragmentation_clone_to_packet(struct __sk_buff *skb) {
         debug_print("[EGRESS-EXIT] FRAG_CLONE: result=%d", result);
         return result;
     }
-    bpf_tail_call(skb, &progs_eg, TAIL_CALL_TCP_STATE_INIT);
+    bpf_tail_call(skb, &progs_eg, TAIL_CALL_TCP_STATE_INIT_EG);
     return TC_ACT_OK;
 }
 
@@ -77,19 +107,29 @@ int dummy_clone_to_packet(struct __sk_buff *skb) {
         debug_print("[EGRESS-EXIT] DUMMY_CLONE: result=%d", result);
         return result;
     }
-    bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE);
+    bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE_EG);
     return TC_ACT_OK;
 }
 
 
 SEC("classifier")
-int tcp_state_init(struct __sk_buff *skb){
+int tcp_state_init_eg(struct __sk_buff *skb){
     __u8 result = seq_num_translation_init_egress(skb);
     if(result != 1) {
         debug_print("[EGRESS-EXIT] TCP_STATE_INIT: result=%d", result);
         return result;
     }
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_FRAGMENT_PACKET);
+    return TC_ACT_OK;
+}
+
+SEC("classifier") int tcp_state_init_in(struct __sk_buff *skb){
+    __u8 result = seq_num_translation_init_ingress(skb);
+    if (result != 1) {
+        debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
+        return result;
+    }
+    bpf_tail_call(skb, &progs_in, TAIL_CALL_MANAGE_TCP_STATE_IN);
     return TC_ACT_OK;
 }
 
@@ -116,18 +156,51 @@ int insert_dummy_packet(struct __sk_buff *skb) {
 }
 
 SEC("classifier")
+int remove_dummy_packet(struct __sk_buff *skb) {
+    switch(is_dummy(skb)){
+        case -1:
+            debug_print("[INGRESS-EXIT] is_dummy: error");
+            return TC_ACT_SHOT;
+        case 0:
+            bpf_tail_call(skb, &progs_in, TAIL_CALL_REMOVE_PADDING);
+        case 1:
+            skb_mark_set_type(skb, SKB_MARK_TYPE_DUMMY);
+            __u8 result = manage_seq_num_ingress(skb); // Update seq num mappings for dummy packets
+            if (result != 1) {
+                debug_print("[INGRESS-EXIT] manage_seq_num_ingress (dummy): result=%d", result);
+                return result;
+            }
+            debug_print("[INGRESS] Detected dummy packet, dropping");
+            return TC_ACT_SHOT;
+    }
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
 int add_padding(struct __sk_buff *skb) {
     __u8 result = add_padding_internal(skb);
     if (result != 1) {
         debug_print("[EGRESS-EXIT] ADD_PADDING: result=%d", result);
         return result;
     }
-    bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE);
+    skb_mark_set_checksum_flag(skb, 1);
+    bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE_IN);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
-int manage_tcp_state_translations(struct __sk_buff *skb){
+int remove_padding(struct __sk_buff *skb){
+    if (remove_padding_internal(skb) < 0) {
+        debug_print("[INGRESS-EXIT] remove_padding_internal failed: TC_ACT_SHOT");
+        return TC_ACT_SHOT;
+    }
+    bpf_tail_call(skb, &progs_in, TAIL_CALL_MANAGE_TCP_STATE_IN);
+    return TC_ACT_OK;
+}
+
+SEC("classifier")
+int manage_tcp_state_translations_eg(struct __sk_buff *skb){
+
     __u8 result = manage_seq_num_egress(skb);
     if(result != 1) {
         debug_print("[EGRESS-EXIT] MANAGE_TCP_STATE: result=%d", result);
@@ -136,91 +209,33 @@ int manage_tcp_state_translations(struct __sk_buff *skb){
     
     // Check if checksum recalculation is needed
     if (skb_mark_get_checksum_flag(skb)) {
-        bpf_tail_call(skb, &progs_eg, TAIL_CALL_RECOMPUTE_CHECKSUM);
+        bpf_tail_call(skb, &progs_eg, TAIL_CALL_RECOMPUTE_CHECKSUM_EG);
     }
 
     debug_print("[EGRESS] END: len=%u", skb->len);
+    return TC_ACT_OK;
+}
+
+
+SEC("classifier") int manage_tcp_state_translations_in(struct __sk_buff *skb){
+    __u8 result = manage_seq_num_ingress(skb);
+    if (result != 1) {
+        debug_print("[INGRESS-EXIT] manage_seq_num_ingress: result=%d", result);
+        return result;
+    }
+    if(skb_mark_get_checksum_flag(skb)) {
+        bpf_tail_call(skb, &progs_in, TAIL_CALL_RECOMPUTE_CHECKSUM_IN);
+    }
+    debug_print("[INGRESS] END: len=%u", skb->len);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int recompute_tcp_checksum(struct __sk_buff *skb) {
     __u8 result = recompute_tcp_checksum_internal(skb);
-    debug_print("[EGRESS] END: len=%u", skb->len);
+    debug_print("END: len=%u", skb->len);
     return result;
 }
-
-
-
-SEC("classifier")
-int handle_ingress(struct __sk_buff *skb) {
-    __u16 ip_tot_old;
-    __u8 ip_header_len, tcp_header_len;
-    __wsum acc = 0;
-    //__u32 seq_num_old;
-    
-    debug_print("[INGRESS] START: len=%u", skb->len);
-    
-    if (should_skip_packet(skb)) {
-        return TC_ACT_OK;
-    }
-
-    __u8 result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_tot_old);
-    if(result != 1) {
-        debug_print("[INGRESS-EXIT] extract_tcp_ip_header_lengths: result=%d", result);
-        return result;
-    }
-    
-    struct client_config *config = get_client_config_ingress(skb, ip_header_len);
-    if (!config) {
-        debug_print("[INGRESS-EXIT] No config for source IP, passing through");
-        return TC_ACT_OK;
-    }
-    result = seq_num_translation_init_ingress(skb);
-    if (result != 1) {
-        debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
-        return result;
-    }
-    skb_mark_reset(skb);  // Reset all mark fields
-
-    //result = extract_seq_num(skb, ip_header_len, &seq_num_old);
-    //if (result != 1) {
-    //    debug_print("[INGRESS-EXIT] extract_seq_num: result=%d", result);
-    //    return result;
-    //}
-    __s8 dummy = is_dummy(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, config);
-    if (dummy < 0) {
-        debug_print("[INGRESS-EXIT] is_dummy: error");
-        return TC_ACT_SHOT;
-    } else if (dummy == 1) {
-        skb_mark_set_type(skb, SKB_MARK_TYPE_DUMMY);
-        result = manage_seq_num_ingress(skb); // Update seq num mappings for dummy packets
-        if (result != 1) {
-            debug_print("[INGRESS-EXIT] manage_seq_num_ingress (dummy): result=%d", result);
-            return result;
-        }
-        debug_print("[INGRESS] Detected dummy packet, dropping");
-        return TC_ACT_SHOT;
-    }
-    if (remove_all_padding(skb, tcp_header_len + ip_header_len + sizeof(struct ethhdr), ip_header_len, ip_tot_old, &acc, config) < 0) {
-        debug_print("[INGRESS-EXIT] remove_all_padding: TC_ACT_SHOT");
-        return TC_ACT_SHOT;
-    }
-    result = manage_seq_num_ingress(skb);
-    if (result != 1) {
-        debug_print("[INGRESS-EXIT] manage_seq_num_ingress: result=%d", result);
-        return result;
-    }
-
-    if (update_checksums_inc(skb, ip_header_len, ip_tot_old, acc) < 0) {
-        debug_print("[INGRESS-EXIT] update_checksums_inc: error");
-        return -1;
-    }
-
-    debug_print("[INGRESS] END: len=%u", skb->len);
-    return TC_ACT_OK;
-}
-
 
 SEC("classifier")
 int handle_egress(struct __sk_buff *skb) {
@@ -251,10 +266,35 @@ int handle_egress(struct __sk_buff *skb) {
             bpf_tail_call(skb, &progs_eg, TAIL_CALL_TCP_DUMMY_CLONE);
             break;
         default:
-            bpf_tail_call(skb, &progs_eg, TAIL_CALL_TCP_STATE_INIT);
+            bpf_tail_call(skb, &progs_eg, TAIL_CALL_TCP_STATE_INIT_EG);
     }
 
     return TC_ACT_OK;
 }
+
+SEC("classifier")
+int handle_ingress(struct __sk_buff *skb) {
+    __u8 ip_header_len;
+    
+    debug_print("[INGRESS] START: len=%u", skb->len);
+    
+    if (should_skip_packet(skb)) {
+        return TC_ACT_OK;
+    }
+
+    if(extract_ip_header_len(skb, &ip_header_len) != 1) {
+        return TC_ACT_OK;
+    }
+    
+    struct client_config *config = get_client_config_ingress(skb, ip_header_len);
+    if (!config) {
+        debug_print("[INGRESS-EXIT] No config for source IP, passing through");
+        return TC_ACT_OK;
+    }
+
+    bpf_tail_call(skb, &progs_in, TAIL_CALL_TCP_STATE_INIT_IN);
+    return TC_ACT_OK;
+}
+
 
 char LICENSE[] SEC("license") = "GPL";

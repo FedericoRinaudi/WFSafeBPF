@@ -11,13 +11,25 @@
 #include "client_config.h"
 
 
-static __always_inline __s8 is_dummy(struct __sk_buff *skb, __u8 tcp_payload_offset, __u8 ip_header_len, __u16 ip_tot_old, struct client_config *config) {
-    __wsum acc = 0;
+static __always_inline __s8 is_dummy(struct __sk_buff *skb) {
+    __u8 ip_header_len, tcp_header_len, tcp_payload_offset, result;
+    result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
+    if(result != 1)
+        return result;
+    tcp_payload_offset = sizeof(struct ethhdr)
+                             + ip_header_len
+                             + tcp_header_len;
+
     if(skb->len - tcp_payload_offset < HASH_LEN*2) {
         return 0;
     }
+
+    struct client_config *config = get_client_config_egress(skb, ip_header_len);
+    if (!config) {
+        return -1;
+    }
     
-    return remove_hmac(skb, skb->len - (HASH_LEN*2), &acc, config->dummy_key);
+    return remove_hmac(skb, skb->len - (HASH_LEN*2), config->dummy_key);
 }
 
 static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb) {
@@ -88,15 +100,15 @@ static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb
 }
 
 static __always_inline __u8 insert_dummy_packet_internal(struct __sk_buff *skb) {
-    __u8 ip_header_len, tcp_header_len;
+    __u8 ip_header_len, tcp_header_len, tcp_payload_offset;
     
     __u8 result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if(result != 1)
         return result;
-    __u32 tcp_payload_offset = sizeof(struct ethhdr)
-                             + (__u32)ip_header_len
-                             + (__u32)tcp_header_len;
-    __u16 payload_len = skb->len - tcp_payload_offset;
+    tcp_payload_offset = sizeof(struct ethhdr)
+                             + ip_header_len
+                             + tcp_header_len;
+    __u16 payload_len = skb->len - (__u16)tcp_payload_offset;
     
     if (payload_len < 32 || skb_mark_get_redirect_count(skb) > 8 ) {
         debug_print("[DUMMY] Skip: payload troppo piccolo o troppi redirect (payload=%u bytes, redirects=%u)", payload_len, skb_mark_get_redirect_count(skb));
