@@ -184,7 +184,7 @@ int add_padding(struct __sk_buff *skb) {
         return result;
     }
     skb_mark_set_checksum_flag(skb, 1);
-    bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE_IN);
+    bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE_EG);
     return TC_ACT_OK;
 }
 
