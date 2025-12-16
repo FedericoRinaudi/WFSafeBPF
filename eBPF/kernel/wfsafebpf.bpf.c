@@ -30,7 +30,7 @@ enum tail_call_index_eg {
 
 enum tail_call_index_in {
     TAIL_CALL_TCP_STATE_INIT_IN,
-    TAIL_CALL_DISCARG_DUMMY,
+    TAIL_CALL_DISCARD_DUMMY,
     TAIL_CALL_REMOVE_PADDING,
     TAIL_CALL_MANAGE_TCP_STATE_IN,
     TAIL_CALL_RECOMPUTE_CHECKSUM_IN,
@@ -80,7 +80,7 @@ struct {
  } progs_in SEC(".maps") = {
      .values = {
          [TAIL_CALL_TCP_STATE_INIT_IN] = (void *)&tcp_state_init_in,
-         [TAIL_CALL_DISCARG_DUMMY] = (void *)&remove_dummy_packet,
+         [TAIL_CALL_DISCARD_DUMMY] = (void *)&remove_dummy_packet,
          [TAIL_CALL_REMOVE_PADDING] = (void *)&remove_padding,
          [TAIL_CALL_MANAGE_TCP_STATE_IN] = (void *)&manage_tcp_state_translations_in,
          [TAIL_CALL_RECOMPUTE_CHECKSUM_IN] = (void *)&recompute_tcp_checksum
@@ -129,7 +129,7 @@ SEC("classifier") int tcp_state_init_in(struct __sk_buff *skb){
         debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
         return result;
     }
-    bpf_tail_call(skb, &progs_in, TAIL_CALL_MANAGE_TCP_STATE_IN);
+    bpf_tail_call(skb, &progs_in, TAIL_CALL_DISCARD_DUMMY);
     return TC_ACT_OK;
 }
 

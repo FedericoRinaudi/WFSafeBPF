@@ -46,6 +46,7 @@ static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
     }
 
     if(i == 0) {
+        debug_print("[PADDING] No valid padding HMACs found to remove");
         return 0;
     }
     
