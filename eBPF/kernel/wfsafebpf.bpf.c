@@ -194,6 +194,7 @@ int remove_padding(struct __sk_buff *skb){
         debug_print("[INGRESS-EXIT] remove_padding_internal failed: TC_ACT_SHOT");
         return TC_ACT_SHOT;
     }
+    skb_mark_set_checksum_flag(skb, 1);
     bpf_tail_call(skb, &progs_in, TAIL_CALL_MANAGE_TCP_STATE_IN);
     return TC_ACT_OK;
 }
