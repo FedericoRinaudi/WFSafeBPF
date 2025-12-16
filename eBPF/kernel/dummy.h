@@ -24,7 +24,7 @@ static __always_inline __s8 is_dummy(struct __sk_buff *skb) {
         return 0;
     }
 
-    struct client_config *config = get_client_config_egress(skb, ip_header_len);
+    struct client_config *config = get_client_config_ingress(skb, ip_header_len);
     if (!config) {
         return -1;
     }

@@ -23,7 +23,7 @@ static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
                              + tcp_header_len;;
     __s8 remove_result;
     
-    struct client_config *config = get_client_config_egress(skb, ip_header_len);
+    struct client_config *config = get_client_config_ingress(skb, ip_header_len);
     if (!config) {
         return -1;
     }
