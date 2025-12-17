@@ -5,11 +5,3 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
-
-# Configurazione del client
-# Modifica questi valori e ricompila per cambiare la configurazione
-[package.metadata.config]
-server_address = "10.10.0.2:8080"
-bytes_to_send = "500"
-bytes_to_receive = "500"
-n_requests = "100"
