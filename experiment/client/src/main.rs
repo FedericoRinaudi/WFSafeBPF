@@ -1,10 +1,10 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, Shutdown};
-use std::thread;
 use std::os::unix::io::AsRawFd;
 use std::time::{Duration, Instant};
 use std::fs::File;
 use std::env;
+use tokio::task;
 
 const SERVER_ADDRESS: &str = match option_env!("CLIENT_SERVER_ADDRESS") {
     Some(addr) => addr,
@@ -33,6 +33,14 @@ const N_REQUESTS: usize = match option_env!("CLIENT_N_REQUESTS") {
         None => 1500,
     },
     None => 1500,
+};
+
+const N_PARALLEL_PACKETS: usize = match option_env!("CLIENT_N_PARALLEL_PACKETS") {
+    Some(s) => match const_parse_usize(s) {
+        Some(n) => n,
+        None => 10,
+    },
+    None => 10,
 };
 
 const fn const_parse_usize(s: &str) -> Option<usize> {
@@ -67,7 +75,35 @@ fn set_tcp_quickack(stream: &TcpStream, enable: bool) {
     }
 }
 
-fn main() {
+// Funzione che invia un singolo pacchetto e riceve la risposta
+fn send_and_receive_packet() -> Result<(), std::io::Error> {
+    let mut stream = TcpStream::connect(SERVER_ADDRESS)?;
+    
+    // Disabilita TCP_QUICKACK per combinare ACK con i dati
+    set_tcp_quickack(&stream, false);
+    
+    // Prepara i dati da inviare
+    let data = vec![0u8; BYTES_TO_SEND];
+    
+    // Invia i dati
+    stream.write_all(&data)?;
+    
+    // Ricevi la risposta
+    let mut response = vec![0u8; BYTES_TO_RECEIVE];
+    stream.read_exact(&mut response)?;
+    
+    // Chiudi la scrittura per inviare FIN
+    let _ = stream.shutdown(Shutdown::Write);
+    
+    // Aspetta il FIN dal server leggendo fino a EOF
+    let mut buf = [0u8; 1];
+    let _ = stream.read(&mut buf);
+    
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
     // Leggi il percorso del file di output dagli argomenti
     let args: Vec<String> = env::args().collect();
     let output_file = if args.len() > 1 {
@@ -89,56 +125,48 @@ fn main() {
     let mut rtts = Vec::with_capacity(N_REQUESTS);
     
     for i in 0..N_REQUESTS {
-        // Crea una nuova connessione per ogni richiesta
-        let mut stream = match TcpStream::connect(SERVER_ADDRESS) {
-            Ok(stream) => stream,
-            Err(e) => {
-                eprintln!("Errore nella connessione: {}", e);
-                continue;
-            }
-        };
-        
-        // Disabilita TCP_QUICKACK per combinare ACK con i dati
-        set_tcp_quickack(&stream, false);
-        
-        // Prepara i dati da inviare
-        let data = vec![0u8; BYTES_TO_SEND];
- 
-        
-        // Invia i dati e inizia a misurare il tempo
+        // Avvia il timer all'inizio dell'invio parallelo
         let start = Instant::now();
         
-        if let Err(e) = stream.write_all(&data) {
-            eprintln!("Errore nell'invio dei dati: {}", e);
-            continue;
+        // Crea N_PARALLEL_PACKETS task paralleli
+        let mut tasks = Vec::new();
+        
+        for _j in 0..N_PARALLEL_PACKETS {
+            let task = task::spawn_blocking(|| {
+                send_and_receive_packet()
+            });
+            tasks.push(task);
         }
         
-        // Ricevi la risposta
-        let mut response = vec![0u8; BYTES_TO_RECEIVE];
-        if let Err(e) = stream.read_exact(&mut response) {
-            eprintln!("Errore nella ricezione: {}", e);
-            continue;
+        // Aspetta che tutti i task completino
+        let mut all_ok = true;
+        for task in tasks {
+            match task.await {
+                Ok(Ok(())) => {},
+                Ok(Err(e)) => {
+                    eprintln!("Errore in un pacchetto: {}", e);
+                    all_ok = false;
+                },
+                Err(e) => {
+                    eprintln!("Errore nel task: {}", e);
+                    all_ok = false;
+                }
+            }
         }
         
-        // Misura RTT (tempo tra invio e ricezione completa)
+        // Misura il tempo quando l'ultimo pacchetto è arrivato
         let rtt = start.elapsed();
-        rtts.push(rtt.as_micros());
         
-        println!("Richiesta {}/{}: inviati {} bytes, ricevuti {} bytes, RTT: {:.3} ms", 
-                 i + 1, N_REQUESTS, BYTES_TO_SEND, BYTES_TO_RECEIVE, rtt.as_secs_f64() * 1000.0);
-        
-        // Chiudi la scrittura per inviare FIN
-        let _ = stream.shutdown(Shutdown::Write);
-        
-        // Aspetta il FIN dal server leggendo fino a EOF
-        let mut buf = [0u8; 1];
-        let _ = stream.read(&mut buf); // Legge fino a quando il server chiude (FIN)
-        
-        // SO_LINGER si occupa di aspettare che tutto sia confermato
-        // Il drop del socket manderà l'ACK finale e aspetterà la conferma
+        if all_ok {
+            rtts.push(rtt.as_micros());
+            println!("Richiesta {}/{}: {} pacchetti paralleli completati, RTT totale: {:.3} ms", 
+                     i + 1, N_REQUESTS, N_PARALLEL_PACKETS, rtt.as_secs_f64() * 1000.0);
+        } else {
+            eprintln!("Richiesta {}/{}: alcuni pacchetti hanno fallito", i + 1, N_REQUESTS);
+        }
         
         // Aspetta 0.1s prima della prossima richiesta
-        thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
     
     println!("\nCompletate tutte le {} richieste", N_REQUESTS);
