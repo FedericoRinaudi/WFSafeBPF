@@ -76,7 +76,8 @@ fn set_tcp_quickack(stream: &TcpStream, enable: bool) {
 }
 
 // Funzione che invia un singolo pacchetto e riceve la risposta
-fn send_and_receive_packet() -> Result<(), std::io::Error> {
+// Restituisce il tempo impiegato per il data transfer (senza handshake)
+fn send_and_receive_packet() -> Result<Duration, std::io::Error> {
     let mut stream = TcpStream::connect(SERVER_ADDRESS)?;
     
     // Disabilita TCP_QUICKACK per combinare ACK con i dati
@@ -85,12 +86,18 @@ fn send_and_receive_packet() -> Result<(), std::io::Error> {
     // Prepara i dati da inviare
     let data = vec![0u8; BYTES_TO_SEND];
     
+    // Inizia la misurazione PRIMA di inviare i dati (dopo l'handshake)
+    let start = Instant::now();
+    
     // Invia i dati
     stream.write_all(&data)?;
     
     // Ricevi la risposta
     let mut response = vec![0u8; BYTES_TO_RECEIVE];
     stream.read_exact(&mut response)?;
+    
+    // Ferma la misurazione DOPO aver ricevuto l'ultimo byte
+    let duration = start.elapsed();
     
     // Chiudi la scrittura per inviare FIN
     let _ = stream.shutdown(Shutdown::Write);
@@ -99,7 +106,7 @@ fn send_and_receive_packet() -> Result<(), std::io::Error> {
     let mut buf = [0u8; 1];
     let _ = stream.read(&mut buf);
     
-    Ok(())
+    Ok(duration)
 }
 
 #[tokio::main]
@@ -125,9 +132,6 @@ async fn main() {
     let mut rtts = Vec::with_capacity(N_REQUESTS);
     
     for i in 0..N_REQUESTS {
-        // Avvia il timer all'inizio dell'invio parallelo
-        let start = Instant::now();
-        
         // Crea N_PARALLEL_PACKETS task paralleli
         let mut tasks = Vec::new();
         
@@ -138,11 +142,15 @@ async fn main() {
             tasks.push(task);
         }
         
-        // Aspetta che tutti i task completino
+        // Aspetta che tutti i task completino e raccogli i tempi
         let mut all_ok = true;
+        let mut durations = Vec::new();
+        
         for task in tasks {
             match task.await {
-                Ok(Ok(())) => {},
+                Ok(Ok(duration)) => {
+                    durations.push(duration);
+                },
                 Ok(Err(e)) => {
                     eprintln!("Errore in un pacchetto: {}", e);
                     all_ok = false;
@@ -154,13 +162,12 @@ async fn main() {
             }
         }
         
-        // Misura il tempo quando l'ultimo pacchetto è arrivato
-        let rtt = start.elapsed();
-        
-        if all_ok {
-            rtts.push(rtt.as_micros());
-            println!("Richiesta {}/{}: {} pacchetti paralleli completati, RTT totale: {:.3} ms", 
-                     i + 1, N_REQUESTS, N_PARALLEL_PACKETS, rtt.as_secs_f64() * 1000.0);
+        if all_ok && !durations.is_empty() {
+            // Calcola il tempo massimo (l'ultimo pacchetto a completare)
+            let max_duration = durations.iter().max().unwrap();
+            rtts.push(max_duration.as_micros());
+            println!("Richiesta {}/{}: {} pacchetti paralleli completati, tempo massimo data transfer: {:.3} ms", 
+                     i + 1, N_REQUESTS, N_PARALLEL_PACKETS, max_duration.as_secs_f64() * 1000.0);
         } else {
             eprintln!("Richiesta {}/{}: alcuni pacchetti hanno fallito", i + 1, N_REQUESTS);
         }
@@ -178,7 +185,7 @@ async fn main() {
         let min = *rtts.iter().min().unwrap();
         let max = *rtts.iter().max().unwrap();
         
-        println!("\nStatistiche RTT:");
+        println!("\nStatistiche tempo data transfer:");
         println!("  - Media: {:.3} ms", avg as f64 / 1000.0);
         println!("  - Min: {:.3} ms", min as f64 / 1000.0);
         println!("  - Max: {:.3} ms", max as f64 / 1000.0);
@@ -187,7 +194,7 @@ async fn main() {
         match File::create(&output_file) {
             Ok(mut file) => {
                 use std::io::Write as _;
-                writeln!(file, "rtt_us").ok();
+                writeln!(file, "data_transfer_time_us").ok();
                 
                 for (_idx, rtt) in rtts.iter().enumerate() {
                     writeln!(file, "{}", rtt).ok();
