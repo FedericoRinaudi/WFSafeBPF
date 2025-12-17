@@ -1,0 +1,12 @@
+[package]
+name = "experiment-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+
+# Configurazione del server
+# Modifica questi valori e ricompila per cambiare la configurazione
+[package.metadata.config]
+bind_address = "0.0.0.0:8080"
