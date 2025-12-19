@@ -20,7 +20,7 @@ static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
         return result;
     tcp_payload_offset = sizeof(struct ethhdr)
                              + ip_header_len
-                             + tcp_header_len;;
+                             + tcp_header_len;
     __s8 remove_result;
     
     struct client_config *config = get_client_config_ingress(skb, ip_header_len);
@@ -28,7 +28,7 @@ static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
         return -1;
     }
 
-    for (i = 0; i < MAX_PADDING_UNITS; i++) {
+    for (i = 0; i < 50; i++) {
         __s32 message_start_pos = skb->len - (32 * (i + 2));
         if (message_start_pos < tcp_payload_offset) {
             break;
@@ -64,8 +64,8 @@ static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
 static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
     __s8 hmac_result;
     __u8 i, tcp_payload_offset, ip_header_len, tcp_header_len;
-    __u8 random_val = bpf_get_prandom_u32() % (MAX_PADDING_UNITS + 1);
-    
+    //__u8 random_val = bpf_get_prandom_u32() % (MAX_PADDING_UNITS + 1);
+    __u8 random_val = 8;
     __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
     if (extract_result != 1) {
         debug_print("[EGRESS] Non-TCP/IP packet or extraction error, skipping HMAC addition");
@@ -101,7 +101,7 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
             debug_print("[PADDING] Failed to expand packet tail");
             return -1;
         }
-        hmac_result = add_hmac(skb, secret_key);
+        hmac_result = add_hmac(skb, secret_key, i);
         if (hmac_result < 0) {
             debug_print("[EGRESS] Error in add_hmac, dropping packet");
             return TC_ACT_SHOT;

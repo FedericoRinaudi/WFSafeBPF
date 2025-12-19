@@ -68,7 +68,7 @@ static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb
         return TC_ACT_SHOT;
     }
     
-    __s8 hmac_result = add_hmac(skb, config->dummy_key);
+    __s8 hmac_result = add_hmac(skb, config->dummy_key, 0);
     if (hmac_result < 0) {
         debug_print("[EGRESS] Error in add_hmac, dropping packet");
         return TC_ACT_SHOT;
