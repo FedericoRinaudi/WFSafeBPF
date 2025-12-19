@@ -151,15 +151,6 @@ static __always_inline __u8 seq_num_map_translation_init(struct __sk_buff *skb, 
     }
     debug_print("[TCP_STATE_INIT-EXIT] No SYN and no translation found: seq=%u, flags=%u", seq_num, flag);
     
-    // Use redirect_count field to track retries and avoid infinite loops
-    //__u8 retry_count = skb_mark_get_redirect_count(skb);
-    //if(retry_count > 8){
-    //    debug_print("[TCP_STATE_INIT-EXIT] Too many redirects: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
-    //    return TC_ACT_SHOT;
-    //}
-    //debug_print("[TCP_STATE_INIT-EXIT] Missing translation, redirecting: retry_count=%u, seq=%u, flags=%u", retry_count, seq_num, flag);
-    //skb_mark_increment_redirect_count(skb);
-    //bpf_clone_redirect(skb, skb->ifindex, redirect_flags);
     return TC_ACT_SHOT;
 }
 

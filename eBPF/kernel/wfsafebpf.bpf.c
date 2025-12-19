@@ -119,6 +119,14 @@ int tcp_state_init_eg(struct __sk_buff *skb){
         debug_print("[EGRESS-EXIT] TCP_STATE_INIT: result=%d", result);
         return result;
     }
+    __u8 ip_header_len, tcp_header_len;
+    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
+    if(extract_result != 1)
+        return extract_result;
+    __u16 tcp_payload_len = skb->len - (ETH_HLEN + ip_header_len + tcp_header_len);
+    if(tcp_payload_len < 32) {
+        bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE_EG);
+    }
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_FRAGMENT_PACKET);
     return TC_ACT_OK;
 }
@@ -128,6 +136,14 @@ SEC("classifier") int tcp_state_init_in(struct __sk_buff *skb){
     if (result != 1) {
         debug_print("[INGRESS-EXIT] seq_num_translation_init_ingress: result=%d", result);
         return result;
+    }
+    __u8 ip_header_len, tcp_header_len;
+    __u8 extract_result = extract_tcp_ip_header_lengths_simple(skb, &ip_header_len, &tcp_header_len);
+    if(extract_result != 1)
+        return extract_result;
+    __u16 tcp_payload_len = skb->len - (ETH_HLEN + ip_header_len + tcp_header_len);
+    if(tcp_payload_len < 64) {
+        bpf_tail_call(skb, &progs_in, TAIL_CALL_MANAGE_TCP_STATE_IN);
     }
     bpf_tail_call(skb, &progs_in, TAIL_CALL_DISCARD_DUMMY);
     return TC_ACT_OK;
@@ -183,18 +199,16 @@ int add_padding(struct __sk_buff *skb) {
         debug_print("[EGRESS-EXIT] ADD_PADDING: result=%d", result);
         return result;
     }
-    skb_mark_set_checksum_flag(skb, 1);
     bpf_tail_call(skb, &progs_eg, TAIL_CALL_MANAGE_TCP_STATE_EG);
     return TC_ACT_OK;
 }
 
 SEC("classifier")
 int remove_padding(struct __sk_buff *skb){
-    if (remove_padding_internal(skb) < 0) {
+    if (remove_padding_internal(skb) != 1) {
         debug_print("[INGRESS-EXIT] remove_padding_internal failed: TC_ACT_SHOT");
         return TC_ACT_SHOT;
     }
-    skb_mark_set_checksum_flag(skb, 1);
     bpf_tail_call(skb, &progs_in, TAIL_CALL_MANAGE_TCP_STATE_IN);
     return TC_ACT_OK;
 }
