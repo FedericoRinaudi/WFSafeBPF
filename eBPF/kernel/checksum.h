@@ -42,23 +42,31 @@ static __always_inline __s8 update_checksums_ack_num(struct __sk_buff *skb, __u8
                            sizeof(__be32));
 }
 
+
+static __always_inline __u16 fold_csum(__u32 sum)
+{
+    sum = (sum & 0xFFFF) + (sum >> 16);
+    sum = (sum & 0xFFFF) + (sum >> 16);
+    return (__u16)sum;
+}
+
 /* Recompute TCP checksum for the entire packet */
 static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *skb) {
+
+    debug_print("[RECOMPUTE_CSUM] START: len=%u", skb->len);
 
     __u8 ip_header_len, tcp_header_len;
     __u16 ip_total_len_old;
     __u8 extract_result = extract_tcp_ip_header_lengths(skb, &ip_header_len, &tcp_header_len, &ip_total_len_old);
     if(extract_result != 1)
-        return extract_result;
-    __wsum payload_csum = 0;
+        return TC_ACT_SHOT;
+    __wsum sum = 0;
     __u8 buffer[FRAG_BUFF_MAX_SIZE];
     __u8 tcp_payload_offset = ETH_HLEN + ip_header_len + tcp_header_len;
     __u16 tcp_payload_len = skb->len - tcp_payload_offset; 
     __u32 bytes_remaining = tcp_payload_len;
     __u16 ip_total_len_new = skb->len - ETH_HLEN;
-    __sum16 old_tcp_check;
-    if (bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check), &old_tcp_check, sizeof(old_tcp_check)) < 0)
-        return TC_ACT_SHOT;
+
     if (update_ip_len_and_csum(skb, ip_header_len, ip_total_len_old, ip_total_len_new) < 0)
         return -1;
 
@@ -75,12 +83,13 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
             return TC_ACT_SHOT;
         }
         
-        __s64 csum_result = bpf_csum_diff((__u32*)buffer, FRAG_BUFF_MAX_SIZE, NULL, 0, payload_csum);
+        __s64 csum_result = bpf_csum_diff(NULL, 0, (__be32*)buffer, FRAG_BUFF_MAX_SIZE, sum);
         if (csum_result < 0) {
             debug_print("[RECOMPUTE_CSUM] ERROR: csum_diff failed for chunk %u", chunk);
             return TC_ACT_SHOT;
         }
-        payload_csum = (__wsum)csum_result;
+
+        sum = (__wsum)csum_result;
         bytes_remaining -= FRAG_BUFF_MAX_SIZE;
 
     }
@@ -100,12 +109,12 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
 
         bytes_remaining += (4 - (bytes_remaining % 4)) % 4;
         
-        __s64 csum_result = bpf_csum_diff((__u32*)buffer, bytes_remaining, NULL, 0, payload_csum);
+        __s64 csum_result = bpf_csum_diff(NULL, 0, (__be32*)buffer, bytes_remaining, sum);
         if (csum_result < 0) {
             debug_print("[RECOMPUTE_CSUM] ERROR: csum_diff failed for remaining bytes %d", bytes_remaining);
             return TC_ACT_SHOT;
         }
-        payload_csum = (__wsum)csum_result;
+        sum = (__wsum)csum_result;
 
     }
 
@@ -127,32 +136,17 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
         return TC_ACT_SHOT;
     }
     
-    /* Store validated tcp_header_len in a register-backed variable */
-    __u8 validated_tcp_len = tcp_header_len;
-    
-    /* Re-validate bounds for the verifier after loading from stack */
-    if (validated_tcp_len < 20 || validated_tcp_len > 60) {
-        debug_print("[RECOMPUTE_CSUM] ERROR: validated_tcp_len out of bounds");
-        return TC_ACT_SHOT;
-    }
-    
-    if (bpf_skb_load_bytes(skb, tcp_header_off, buffer, validated_tcp_len) < 0) {
+    if (bpf_skb_load_bytes(skb, tcp_header_off, buffer, tcp_header_len) < 0) {
         debug_print("[RECOMPUTE_CSUM] ERROR: Failed to load TCP header");
         return TC_ACT_SHOT;
     }
 
-    __s64 t = bpf_csum_diff(NULL, 0, (__be32 *)buffer, validated_tcp_len, payload_csum);
+    __s64 t = bpf_csum_diff(NULL, 0, (__be32 *)buffer, tcp_header_len, sum);
     if (t < 0) {
         debug_print("[RECOMPUTE_CSUM] ERROR: csum_diff failed for TCP header");
         return TC_ACT_SHOT;
     }
-    payload_csum = (__wsum)t;
-
-    if (bpf_l4_csum_replace(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
-                           0, payload_csum, 0) < 0) {
-        debug_print("[RECOMPUTE_CSUM] ERROR: Failed to replace L4 checksum (first)");
-        return TC_ACT_SHOT;
-    }
+    sum = (__wsum)t;
     
     /* add pseudo-header contribution to checksum */
     if (bpf_skb_load_bytes(skb,
@@ -168,17 +162,24 @@ static __always_inline __s8 recompute_tcp_checksum_internal(struct __sk_buff *sk
     __u16 tcp_total_len = tcp_header_len + tcp_payload_len;
     __be16 tcp_total_len_be = bpf_htons(tcp_total_len);
     __builtin_memcpy(&buffer[10], &tcp_total_len_be, 2);    
-    payload_csum = bpf_csum_diff(NULL, 0, (__be32 *)buffer, 12, 0);
-    if (payload_csum < 0) {
+    t = bpf_csum_diff(NULL, 0, (__be32 *)buffer, 12, sum);
+    if (t < 0) {
         debug_print("[RECOMPUTE_CSUM] ERROR: csum_diff failed for pseudo-header");
         return TC_ACT_SHOT;
     }
+    sum = (__wsum)t;
 
-    if (bpf_l4_csum_replace(skb, tcp_header_off + offsetof(struct tcphdr, check), 0, payload_csum, BPF_F_PSEUDO_HDR) < 0) {
-        debug_print("[RECOMPUTE_CSUM] ERROR: Failed to replace L4 checksum (pseudo-header)");
+    __u16 folded = fold_csum((__u32)sum);
+    __be16 check = (__be16)~folded;
+    if (bpf_skb_store_bytes(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check),
+                        &check, sizeof(check), 0) < 0){
         return TC_ACT_SHOT;
     }
-    
+
+    __u16 checksum;
+    extract_result = bpf_skb_load_bytes(skb, sizeof(struct ethhdr) + ip_header_len + offsetof(struct tcphdr, check), &checksum, sizeof(checksum));
+    debug_print("[RECOMPUTE_CSUM] END: len=%u, new_tcp_checksum=0x%04x", skb->len, checksum);
+
     return TC_ACT_OK;
 }
 
