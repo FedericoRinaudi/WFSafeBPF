@@ -127,7 +127,6 @@ static __always_inline __u8 insert_dummy_packet_internal(struct __sk_buff *skb) 
         debug_print("[DUMMY] ERROR: Failed to clone packet at iteration");
         return TC_ACT_SHOT;
     }
-    skb_mark_set_type(skb, SKB_MARK_TYPE_CLONED_FOR_DUMMY);
     return 1; // Signal to continue processing
 }
 

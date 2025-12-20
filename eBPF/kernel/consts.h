@@ -14,8 +14,7 @@
 #define SKB_MARK_TYPE_NONE 0
 #define SKB_MARK_TYPE_FRAGMENT_CLONE 1
 #define SKB_MARK_TYPE_DUMMY_CLONE 2
-#define SKB_MARK_TYPE_CLONED_FOR_DUMMY 3
-#define SKB_MARK_TYPE_DUMMY 4
+#define SKB_MARK_TYPE_DUMMY 3
 /* BLAKE2s authentication tag size */
 #define HASH_LEN 32
 
