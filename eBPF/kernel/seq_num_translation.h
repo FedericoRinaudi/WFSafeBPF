@@ -88,6 +88,7 @@ static __always_inline __u8 init_translation_map(void* map, struct flow_info *fl
     value.prev_seq = 0;
     value.timestamp_ns = bpf_ktime_get_ns();
     value.is_fin_ack = 0;
+    debug_print("[SEQ_TRANS] Initializing translation map: %u -> %u", seq_num, value.translated_seq);
     if (bpf_map_update_elem(map, &key, &value, BPF_ANY) < 0) {
         debug_print("[SEQ_TRANS] Failed to initialize translation map");
         return TC_ACT_SHOT;
@@ -164,12 +165,13 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
 
     __u8 mark = skb_mark_get_type(skb);
 
-    if(mark == SKB_MARK_TYPE_CLONED_FOR_DUMMY){
-        translation->translated_seq += skb_mark_get_len(skb);
-    }
-
     *output_seq_num = translation->translated_seq;
     debug_print("[SEQ_TRANS] Translating seq_num: %u -> %u", input_seq_num, *output_seq_num);
+
+    if (input_seq_num == *output_seq_num) {
+        debug_print("[SEQ_TRANS] No change in seq_num: %u", input_seq_num);
+        return 1;
+    }
 
     int result = replace_seq_num(skb, ip_header_len, *output_seq_num);
     if (result != 1) {
@@ -177,10 +179,7 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
         return result;
     }
 
-    if (update_checksums_seq_num(skb, ip_header_len, input_seq_num, *output_seq_num)!=0) {
-        debug_print("[SEQ_TRANS] Failed to update checksums for seq_num");
-        return TC_ACT_SHOT;
-    }
+    skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
 
     return 1;
 }
@@ -236,21 +235,7 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         debug_print("[SEQ_TRANS] No translation found for ack_num=%u", input_ack_num);
         return TC_ACT_SHOT;
     }
-    debug_print("[SEQ_TRANS] Translating ack_num: %u -> %u", input_ack_num, translation->translated_seq);
-   // Replace ack_num in packet
-    if (replace_ack_num(skb, ip_header_len, translation->translated_seq) < 0) {
-        debug_print("[SEQ_TRANS] Failed to replace ack_num");
-        return TC_ACT_SHOT;
-    }
 
-    if (update_checksums_ack_num(skb, ip_header_len, input_ack_num, translation->translated_seq)!=0) {
-        debug_print("[SEQ_TRANS] Failed to update checksums for ack_num");
-        return TC_ACT_SHOT;
-    }
-    
-    // Non puliamo più le mappe con ogni ACK (causava problemi con ritrasmissioni)
-    // La pulizia avviene solo quando arriva il FIN
-    
     // Se questo ACK conferma un FIN, segnala per pulizia di tutte le mappe
     // Inseriamo il translated_seq con il flow invertito
     if (translation->is_fin_ack == 1) {
@@ -258,6 +243,19 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         reverse_flow(&reversed_flow);
         offload_cleanup_to_user_space(fin_cleanup_queue, &reversed_flow, translation->translated_seq);
     }
+
+    if(input_ack_num == translation->translated_seq) {
+        debug_print("[SEQ_TRANS] No change in ack_num: %u", input_ack_num);
+        return 1;
+    }
+
+    debug_print("[SEQ_TRANS] Translating ack_num: %u -> %u", input_ack_num, translation->translated_seq);
+   // Replace ack_num in packet
+    if (replace_ack_num(skb, ip_header_len, translation->translated_seq) < 0) {
+        debug_print("[SEQ_TRANS] Failed to replace ack_num");
+        return TC_ACT_SHOT;
+    }
+    skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
 
     return 1;
 }
@@ -300,16 +298,17 @@ static __always_inline __u8 manage_seq_and_ack(struct __sk_buff *skb, void* seq_
 
     if(mark == SKB_MARK_TYPE_DUMMY){
         translated_payload_len = 0;
+    } else if (mark == SKB_MARK_TYPE_DUMMY_CLONE){
+        input_payload_len = 0;
     }
 
     __u8 has_fin = is_fin(tcp_flags) ? 1 : 0;
     
-    if(mark!= SKB_MARK_TYPE_DUMMY_CLONE){
-        result = insert_new_seq(seq_num_map, ack_map_reverse, &flow, input_seq_num, translated_seq_num, input_payload_len, translated_payload_len, has_fin);
-        if (result != 1) {
-            return result;
-        }
+    result = insert_new_seq(seq_num_map, ack_map_reverse, &flow, input_seq_num, translated_seq_num, input_payload_len, translated_payload_len, has_fin);
+    if (result != 1) {
+        return result;
     }
+    
     
     if(mark == SKB_MARK_TYPE_DUMMY){
         return 1;
