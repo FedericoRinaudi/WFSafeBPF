@@ -35,7 +35,6 @@
 
 SKB_MARK_DEFINE_FIELD(type,            __u8,  8,  0);
 SKB_MARK_DEFINE_FIELD(redirect_count,  __u8,  4,  8);
-SKB_MARK_DEFINE_FIELD(checksum_flag,   __u8,  4, 12);
 SKB_MARK_DEFINE_FIELD(len,__u16,16, 16);
 
 /* helper extra non generabili in automatico (increment, reset, build) */
@@ -44,22 +43,6 @@ static __always_inline void skb_mark_increment_redirect_count(struct __sk_buff *
 {
     __u8 current = skb_mark_get_redirect_count(skb);
     skb_mark_set_redirect_count(skb, current + 1);
-}
-
-static __always_inline void skb_mark_reset(struct __sk_buff *skb)
-{
-    skb->mark = 0;
-}
-
-static __always_inline __u32 skb_mark_build(__u16 frag_payload,
-                                            __u8 type,
-                                            __u8 checksum_flag,
-                                            __u8 redirect_count)
-{
-    return (((__u32)frag_payload   << SKB_MARK_len_SHIFT) & SKB_MARK_len_MASK) |
-           (((__u32)checksum_flag  << SKB_MARK_checksum_flag_SHIFT)    & SKB_MARK_checksum_flag_MASK)   |
-           (((__u32)redirect_count << SKB_MARK_redirect_count_SHIFT)   & SKB_MARK_redirect_count_MASK)  |
-           (((__u32)type           << SKB_MARK_type_SHIFT)             & SKB_MARK_type_MASK);
 }
 
 #endif /* __SKB_MARK_H */

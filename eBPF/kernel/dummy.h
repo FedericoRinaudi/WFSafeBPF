@@ -86,8 +86,6 @@ static __always_inline __u8 dummy_clone_to_packet_internal(struct __sk_buff *skb
         debug_print("[DUMMY_CLONE] ERROR: Failed to replace TCP flags");
         return TC_ACT_SHOT;
     }
-
-    skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
         
     return 1; // Signal to continue with fragmentation
 }

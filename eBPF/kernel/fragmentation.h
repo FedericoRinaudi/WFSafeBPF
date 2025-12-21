@@ -56,7 +56,6 @@ static __always_inline __u8 fragmentation_clone_to_packet_internal(struct __sk_b
 
     /* Clear len and set checksum_flag (packet modified) */
     skb_mark_set_len(skb, 0);
-    skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
         
     return 1; // Signal to continue with fragmentation
 }
@@ -148,8 +147,6 @@ static __always_inline __u8 fragment_packet_internal(struct __sk_buff *skb) {
         debug_print("[FRAG_CLONE] ERROR: Failed to update IP len and csum");
         return TC_ACT_SHOT;
     }
-    
-    skb_mark_set_checksum_flag(skb, 1);
 
     __u32 old_seq;
     result = extract_seq_num(skb, ip_header_len, &old_seq);
