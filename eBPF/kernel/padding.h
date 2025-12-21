@@ -56,8 +56,6 @@ static __always_inline __s8 remove_padding_internal(struct __sk_buff *skb) {
         debug_print("[REMOVE_HMAC] Failed to shrink packet after HMAC removal");
         return -1;
     }
-
-    skb_mark_set_checksum_flag(skb, 1);
     
     return 1;
 }
@@ -117,9 +115,6 @@ static __always_inline __s8 add_padding_internal(struct __sk_buff *skb) {
     }
     
     debug_print("[PADDING] Added %u bytes of padding (%u HMACs)", HASH_LEN*i, i);
-    
-    // Set checksum flag to indicate checksum recalculation is needed
-    skb_mark_set_checksum_flag(skb, 1);
 
     return 1;
 }

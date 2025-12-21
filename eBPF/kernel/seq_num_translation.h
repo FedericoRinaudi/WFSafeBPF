@@ -168,18 +168,16 @@ static __always_inline __u8 translate_seq_num(struct __sk_buff *skb, void* seq_n
     *output_seq_num = translation->translated_seq;
     debug_print("[SEQ_TRANS] Translating seq_num: %u -> %u", input_seq_num, *output_seq_num);
 
-    if (input_seq_num == *output_seq_num) {
-        debug_print("[SEQ_TRANS] No change in seq_num: %u", input_seq_num);
-        return 1;
-    }
+    //if (input_seq_num == *output_seq_num) {
+    //    debug_print("[SEQ_TRANS] No change in seq_num: %u", input_seq_num);
+    //    return 1;
+    //}
 
     int result = replace_seq_num(skb, ip_header_len, *output_seq_num);
     if (result != 1) {
         debug_print("[SEQ_TRANS] Failed to replace seq_num");
         return result;
     }
-
-    skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
 
     return 1;
 }
@@ -244,10 +242,10 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         offload_cleanup_to_user_space(fin_cleanup_queue, &reversed_flow, translation->translated_seq);
     }
 
-    if(input_ack_num == translation->translated_seq) {
-        debug_print("[SEQ_TRANS] No change in ack_num: %u", input_ack_num);
-        return 1;
-    }
+    //if(input_ack_num == translation->translated_seq) {
+    //    debug_print("[SEQ_TRANS] No change in ack_num: %u", input_ack_num);
+    //    return 1;
+    //}
 
     debug_print("[SEQ_TRANS] Translating ack_num: %u -> %u", input_ack_num, translation->translated_seq);
    // Replace ack_num in packet
@@ -255,7 +253,6 @@ static __always_inline __u8 manage_ack(struct __sk_buff *skb, void* ack_map, voi
         debug_print("[SEQ_TRANS] Failed to replace ack_num");
         return TC_ACT_SHOT;
     }
-    skb_mark_set_checksum_flag(skb, 1);  // Checksum recalculation needed
 
     return 1;
 }
