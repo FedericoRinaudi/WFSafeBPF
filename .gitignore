@@ -98,3 +98,4 @@ vmlinux.h
 
 *.png
 *.csv
+*.pcap

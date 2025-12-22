@@ -9,7 +9,7 @@ use tokio::task;
 const SERVER_ADDRESS: &str = "10.10.0.2:8080";
 const BYTES_TO_SEND: usize = 90; //+ 54 di headers
 const BYTES_TO_RECEIVE: usize = 211; //+ 54 di headers
-const N_REQUESTS: usize = 1500;
+const N_REQUESTS: usize = 3000;
 const N_PARALLEL_PACKETS: usize = 20;
 
 fn set_tcp_quickack(stream: &TcpStream, enable: bool) {
