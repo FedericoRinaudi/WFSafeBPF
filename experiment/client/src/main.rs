@@ -12,6 +12,25 @@ const BYTES_TO_RECEIVE: usize = 211; //+ 54 di headers
 const N_REQUESTS: usize = 3000;
 const N_PARALLEL_PACKETS: usize = 20;
 
+const fn const_parse_usize(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    
+    let mut result: usize = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let digit = bytes[i];
+        if digit < b'0' || digit > b'9' {
+            return None;
+        }
+        result = result * 10 + (digit - b'0') as usize;
+        i += 1;
+    }
+    Some(result)
+}
+
 fn set_tcp_quickack(stream: &TcpStream, enable: bool) {
     unsafe {
         let optval: libc::c_int = if enable { 1 } else { 0 };
@@ -25,42 +44,7 @@ fn set_tcp_quickack(stream: &TcpStream, enable: bool) {
     }
 }
 
-// Funzione che invia un singolo pacchetto e riceve la risposta
-// Restituisce il tempo impiegato per il data transfer (senza handshake)
-fn send_and_receive_packet() -> Result<Duration, std::io::Error> {
-    let mut stream = TcpStream::connect(SERVER_ADDRESS)?;
-    
-    // Disabilita TCP_QUICKACK per combinare ACK con i dati
-    set_tcp_quickack(&stream, false);
-    
-    // Prepara i dati da inviare
-    let data = vec![0u8; BYTES_TO_SEND];
-    
-    // Inizia la misurazione PRIMA di inviare i dati (dopo l'handshake)
-    let start = Instant::now();
-    
-    // Invia i dati
-    stream.write_all(&data)?;
-    
-    // Ricevi la risposta
-    let mut response = vec![0u8; BYTES_TO_RECEIVE];
-    stream.read_exact(&mut response)?;
-    
-    // Ferma la misurazione DOPO aver ricevuto l'ultimo byte
-    let duration = start.elapsed();
-    
-    // Chiudi la scrittura per inviare FIN
-    let _ = stream.shutdown(Shutdown::Write);
-    
-    // Aspetta il FIN dal server leggendo fino a EOF
-    let mut buf = [0u8; 1];
-    let _ = stream.read(&mut buf);
-    
-    Ok(duration)
-}
-
-#[tokio::main]
-async fn main() {
+fn main() {
     // Leggi il percorso del file di output dagli argomenti
     let args: Vec<String> = env::args().collect();
     let output_file = if args.len() > 1 {
@@ -82,48 +66,52 @@ async fn main() {
     let mut rtts = Vec::with_capacity(N_REQUESTS);
     
     for i in 0..N_REQUESTS {
-        // Crea N_PARALLEL_PACKETS task paralleli
-        let mut tasks = Vec::new();
-        
-        for _j in 0..N_PARALLEL_PACKETS {
-            let task = task::spawn_blocking(|| {
-                send_and_receive_packet()
-            });
-            tasks.push(task);
-        }
-        
-        // Aspetta che tutti i task completino e raccogli i tempi
-        let mut all_ok = true;
-        let mut durations = Vec::new();
-        
-        for task in tasks {
-            match task.await {
-                Ok(Ok(duration)) => {
-                    durations.push(duration);
-                },
-                Ok(Err(e)) => {
-                    eprintln!("Errore in un pacchetto: {}", e);
-                    all_ok = false;
-                },
-                Err(e) => {
-                    eprintln!("Errore nel task: {}", e);
-                    all_ok = false;
-                }
+        // Crea una nuova connessione per ogni richiesta
+        let mut stream = match TcpStream::connect(SERVER_ADDRESS) {
+            Ok(stream) => stream,
+            Err(e) => {
+                eprintln!("Errore nella connessione: {}", e);
+                continue;
             }
+        };
+        
+        // Disabilita TCP_QUICKACK per combinare ACK con i dati
+        set_tcp_quickack(&stream, false);
+        
+        // Prepara i dati da inviare
+        let data = vec![0u8; BYTES_TO_SEND];
+ 
+        
+        // Invia i dati e inizia a misurare il tempo
+        let start = Instant::now();
+        
+        if let Err(e) = stream.write_all(&data) {
+            eprintln!("Errore nell'invio dei dati: {}", e);
+            continue;
         }
         
-        if all_ok && !durations.is_empty() {
-            // Calcola il tempo massimo (l'ultimo pacchetto a completare)
-            let max_duration = durations.iter().max().unwrap();
-            rtts.push(max_duration.as_micros());
-            println!("Richiesta {}/{}: {} pacchetti paralleli completati, tempo massimo data transfer: {:.3} ms", 
-                     i + 1, N_REQUESTS, N_PARALLEL_PACKETS, max_duration.as_secs_f64() * 1000.0);
-        } else {
-            eprintln!("Richiesta {}/{}: alcuni pacchetti hanno fallito", i + 1, N_REQUESTS);
+        // Ricevi la risposta
+        let mut response = vec![0u8; BYTES_TO_RECEIVE];
+        if let Err(e) = stream.read_exact(&mut response) {
+            eprintln!("Errore nella ricezione: {}", e);
+            continue;
         }
         
-        // Aspetta 0.1s prima della prossima richiesta
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Misura RTT (tempo tra invio e ricezione completa)
+        let rtt = start.elapsed();
+        rtts.push(rtt.as_micros());
+        
+        println!("Richiesta {}/{}: inviati {} bytes, ricevuti {} bytes, RTT: {:.3} ms", 
+                 i + 1, N_REQUESTS, BYTES_TO_SEND, BYTES_TO_RECEIVE, rtt.as_secs_f64() * 1000.0);
+        
+        // Chiudi la scrittura per inviare FIN
+        let _ = stream.shutdown(Shutdown::Write);
+        
+        // Aspetta il FIN dal server leggendo fino a EOF
+        let mut buf = [0u8; 1];
+        let _ = stream.read(&mut buf); // Legge fino a quando il server chiude (FIN)
+  
+        thread::sleep(Duration::from_millis(2));
     }
     
     println!("\nCompletate tutte le {} richieste", N_REQUESTS);
@@ -135,7 +123,7 @@ async fn main() {
         let min = *rtts.iter().min().unwrap();
         let max = *rtts.iter().max().unwrap();
         
-        println!("\nStatistiche tempo data transfer:");
+        println!("\nStatistiche RTT:");
         println!("  - Media: {:.3} ms", avg as f64 / 1000.0);
         println!("  - Min: {:.3} ms", min as f64 / 1000.0);
         println!("  - Max: {:.3} ms", max as f64 / 1000.0);
@@ -144,7 +132,7 @@ async fn main() {
         match File::create(&output_file) {
             Ok(mut file) => {
                 use std::io::Write as _;
-                writeln!(file, "data_transfer_time_us").ok();
+                writeln!(file, "rtt_us").ok();
                 
                 for (_idx, rtt) in rtts.iter().enumerate() {
                     writeln!(file, "{}", rtt).ok();
