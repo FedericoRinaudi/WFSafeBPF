@@ -1,17 +1,16 @@
 use std::mem;
 
-/// Struttura chiave per la mappa BPF (corrisponde a struct client_config_key in C)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct ClientConfigKey {
     pub ip_addr: u32,
     pub server_port: u16,
-    // Il padding di 2 bytes viene gestito automaticamente dal compilatore con #[repr(C)]
+    pub _padding: u16, // Padding esplicito per l'allineamento
 }
 
 impl ClientConfigKey {
     pub fn new(ip_addr: u32, server_port: u16) -> Self {
-        Self { ip_addr, server_port }
+        Self { ip_addr, server_port, _padding: 0 }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
