@@ -6,12 +6,16 @@ use std::mem;
 pub struct ClientConfigKey {
     pub ip_addr: u32,
     pub server_port: u16,
-    // Il padding di 2 bytes viene gestito automaticamente dal compilatore con #[repr(C)]
+    _padding: u16,  // Padding esplicito per allineamento a 8 bytes
 }
 
 impl ClientConfigKey {
     pub fn new(ip_addr: u32, server_port: u16) -> Self {
-        Self { ip_addr, server_port }
+        Self { 
+            ip_addr, 
+            server_port,
+            _padding: 0,
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {

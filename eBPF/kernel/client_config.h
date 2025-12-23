@@ -16,9 +16,11 @@ struct client_config {
 };
 
 /* Key structure for client config map (IP address + server port) */
+/* Key structure for client config map (IP address + server port) */
 struct client_config_key {
     __u32 ip_addr;      // IP address
     __u16 server_port;  // Server port
+    __u16 _padding;     // Explicit padding for alignment
 };
 
 /* Map for client configurations indexed by IP address and server port */

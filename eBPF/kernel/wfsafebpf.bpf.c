@@ -222,12 +222,8 @@ int manage_tcp_state_translations_eg(struct __sk_buff *skb){
         return result;
     }
     
-    // Check if checksum recalculation is needed
-    if (skb_mark_get_checksum_flag(skb)) {
-        bpf_tail_call(skb, &progs_eg, TAIL_CALL_RECOMPUTE_CHECKSUM_EG);
-    }
-
-    debug_print("[EGRESS] END: len=%u", skb->len);
+    bpf_tail_call(skb, &progs_eg, TAIL_CALL_RECOMPUTE_CHECKSUM_EG);
+    
     return TC_ACT_OK;
 }
 
@@ -238,10 +234,8 @@ SEC("classifier") int manage_tcp_state_translations_in(struct __sk_buff *skb){
         debug_print("[INGRESS-EXIT] manage_seq_num_ingress: result=%d", result);
         return result;
     }
-    if(skb_mark_get_checksum_flag(skb)) {
-        bpf_tail_call(skb, &progs_in, TAIL_CALL_RECOMPUTE_CHECKSUM_IN);
-    }
-    debug_print("[INGRESS] END: len=%u", skb->len);
+    bpf_tail_call(skb, &progs_in, TAIL_CALL_RECOMPUTE_CHECKSUM_IN);
+    
     return TC_ACT_OK;
 }
 
